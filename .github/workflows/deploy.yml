@@ -86,7 +86,7 @@ jobs:
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           script: |
             IMAGE="ghcr.io/jfahrni/migrane-tracker:latest"
-            DIR="$HOME/migrane-tracker"
+            DIR="/srv/migrane-tracker"
 
             echo "→ Image pullen..."
             docker pull "$IMAGE"
