@@ -55,13 +55,16 @@ const handler = createMcpHandler(
           "Frage vorher nach: Intensität (1-10), Aura (ja/nein + Typ), mögliche Trigger. " +
           "Triggers dürfen als freier Text kommen — interpretiere die Aussagen des Nutzers und wähle passende Slugs aus der Tag-Bibliothek. " +
           "Wetterdaten werden automatisch abgerufen und relevante Wetter-Trigger automatisch ergänzt. " +
-          "startedAt ist optional — wenn der Nutzer rückwirkend erfasst, frage nach dem genauen Zeitpunkt.",
+          "startedAt ist optional — wenn der Nutzer rückwirkend erfasst, frage nach dem genauen Zeitpunkt. " +
+          "WICHTIG: Lege IMMER eine kurze narrative Zusammenfassung im notes-Feld ab — in den eigenen Worten des Nutzers, verdichtet auf 1-2 Sätze. " +
+          "Diese Notiz bewahrt den Kontext, den die strukturierten Tags verlieren (z.B. WARUM Stress, was genau am Bildschirm, welche Vorgeschichte). " +
+          "Beispiel: 'Starke Attacke morgens. Gestern langer Bildschirmtag, kaum getrunken. Eigene Einschätzung: Überanstrengung + Dehydration.'",
         inputSchema: {
           intensity: z.number().int().min(1).max(10).optional().describe("Schmerzintensität 1-10 (NRS)"),
           hasAura: z.boolean().optional().describe("Hatte die Attacke eine Aura?"),
           auraType: z.enum(["visual", "sensory", "speech", "other"]).optional().describe("Art der Aura"),
           triggers: z.array(z.string()).optional().describe(`Trigger-Tags aus der Bibliothek: ${TRIGGER_SLUGS.join(", ")}`),
-          notes: z.string().optional().describe("Freitext-Notiz"),
+          notes: z.string().optional().describe("Narrative Zusammenfassung in den Worten des Nutzers (1-2 Sätze) — bewahrt Kontext jenseits der Tags. IMMER ausfüllen."),
           medications: z.string().optional().describe("Eingenommene Medikamente"),
           startedAt: z.string().optional().describe("ISO-Datetime für rückwirkende Einträge"),
         },
@@ -77,11 +80,12 @@ const handler = createMcpHandler(
           "Markiere eine Migräne-Attacke als beendet und erfasse die Dauer. " +
           "Wenn kein attackId angegeben wird, wird die jüngste offene Attacke abgeschlossen. " +
           "endedAt ist optional (Standard: jetzt). " +
-          "Rufe dieses Tool auf, wenn der Nutzer sagt, dass es ihm besser geht oder die Migräne vorbei ist.",
+          "Rufe dieses Tool auf, wenn der Nutzer sagt, dass es ihm besser geht oder die Migräne vorbei ist. " +
+          "Frage kurz nach, was geholfen hat (Schlaf, Medikament, Ruhe) und halte das narrativ in notes fest.",
         inputSchema: {
           attackId: z.string().optional().describe("ID der Attacke (optional — schliesst sonst die letzte offene)"),
           endedAt: z.string().optional().describe("ISO-Datetime des Endes (Standard: jetzt)"),
-          notes: z.string().optional().describe("Abschliessende Notiz"),
+          notes: z.string().optional().describe("Narrative Abschluss-Notiz: Verlauf und was geholfen hat. Wird an die Start-Notiz angehängt."),
         },
       },
       (args) => run("log_attack_end", () => logAttackEnd(args)),
