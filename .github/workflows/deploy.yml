@@ -79,20 +79,14 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
-          envs: GHCR_TOKEN
           script: |
             IMAGE="ghcr.io/jfahrni/migrane-tracker:latest"
             DIR="$HOME/migrane-tracker"
-
-            echo "→ ghcr.io login..."
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u jfahrni --password-stdin
 
             echo "→ Image pullen..."
             docker pull "$IMAGE"
