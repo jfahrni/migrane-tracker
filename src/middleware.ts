@@ -5,26 +5,9 @@ export function middleware(req: NextRequest) {
   const method = req.method;
   const ip = req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() ?? "?";
   console.log(`[REQ] ${method} ${pathname}${search} — ${ip}`);
-
-  // Claude Mobile/Web nutzt die eingegebene Connector-URL (Root) als MCP-Endpoint
-  // und schickt JSON-RPC-Requests an "/". Diese an den echten MCP-Handler umleiten.
-  // Die HTML-Homepage (Accept: text/html) wird NICHT umgeleitet.
-  if (pathname === "/") {
-    const accept = req.headers.get("accept") ?? "";
-    const isMcpRequest =
-      method === "POST" ||
-      method === "DELETE" ||
-      (method === "GET" && accept.includes("text/event-stream"));
-    const wantsHtml = accept.includes("text/html");
-
-    if (isMcpRequest && !wantsHtml) {
-      const url = req.nextUrl.clone();
-      url.pathname = "/api/mcp";
-      console.log(`[REWRITE] ${method} / → /api/mcp`);
-      return NextResponse.rewrite(url);
-    }
-  }
-
+  // Hinweis: mcp-handler liest die originale req.url und strippt basePath selbst.
+  // Rewrites (/, /mcp → /api/mcp) führen zu 404 — der Client MUSS direkt
+  // https://migraene.fahrni.ch/api/mcp als Connector-URL verwenden.
   return NextResponse.next();
 }
 
