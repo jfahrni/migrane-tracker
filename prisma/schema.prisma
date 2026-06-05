@@ -1,0 +1,75 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Attack {
+  id          String    @id @default(cuid())
+  startedAt   DateTime
+  endedAt     DateTime?
+  intensity   Int?      // 1-10 NRS
+  hasAura     Boolean?
+  auraType    String?   // "visual" | "sensory" | "speech" | "other"
+  triggers    String    @default("[]") // JSON string array of trigger slugs
+  notes       String?
+  medications String?
+  weather     String?   // JSON snapshot from OpenMeteo
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([startedAt(sort: Desc)])
+}
+
+// ── OAuth 2.0 (für Claude Mobile) ────────────────────────────────────────────
+
+model OAuthClient {
+  id           String   @id @default(cuid())
+  clientId     String   @unique
+  clientName   String
+  redirectUris String   // JSON array
+  createdAt    DateTime @default(now())
+
+  codes  OAuthCode[]
+  tokens OAuthToken[]
+}
+
+model OAuthCode {
+  id                  String      @id @default(cuid())
+  code                String      @unique
+  clientId            String
+  client              OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  redirectUri         String
+  scopes              String
+  codeChallenge       String
+  codeChallengeMethod String      @default("S256")
+  expiresAt           DateTime
+  usedAt              DateTime?
+  createdAt           DateTime    @default(now())
+
+  @@index([code])
+  @@index([expiresAt])
+}
+
+model OAuthToken {
+  id        String      @id @default(cuid())
+  tokenHash String      @unique
+  clientId  String
+  client    OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  scopes    String
+  expiresAt DateTime
+  createdAt DateTime    @default(now())
+
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+model RateLimit {
+  key     String   @id
+  count   Int      @default(1)
+  resetAt DateTime
+}

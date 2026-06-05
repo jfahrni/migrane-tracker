@@ -1,0 +1,15 @@
+services:
+  migrane-tracker:
+    build: .
+    container_name: migrane-tracker
+    init: true
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - migrane-data:/app/data
+
+volumes:
+  migrane-data:
