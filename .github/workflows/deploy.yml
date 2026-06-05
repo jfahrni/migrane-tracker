@@ -75,6 +75,7 @@ jobs:
     needs: [build-and-push, typecheck]
     if: ${{ github.event.inputs.deploy != 'false' }}
     runs-on: ubuntu-latest
+    environment: asgard
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
