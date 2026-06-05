@@ -1,0 +1,17 @@
+# Diese Datei kommt auf den Server (~/migrane-tracker/docker-compose.yml)
+# Sie verwendet das fertige Image von ghcr.io statt lokal zu bauen.
+services:
+  migrane-tracker:
+    image: ghcr.io/jfahrni/migrane-tracker:latest
+    container_name: migrane-tracker
+    init: true
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - migrane-data:/app/data
+
+volumes:
+  migrane-data:
