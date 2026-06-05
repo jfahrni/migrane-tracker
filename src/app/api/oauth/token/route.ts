@@ -26,12 +26,19 @@ export async function POST(req: NextRequest) {
   if (!code || !redirect_uri || !clientId || !codeVerifier) return NextResponse.json({ error: "invalid_request" }, { status: 400 });
 
   const client = await getClient(clientId);
-  if (!client) return NextResponse.json({ error: "invalid_client" }, { status: 401 });
+  if (!client) {
+    console.error("[oauth/token] invalid_client:", clientId);
+    return NextResponse.json({ error: "invalid_client" }, { status: 401 });
+  }
 
   const record = await consumeAuthorizationCode(code, clientId, redirect_uri);
-  if (!record) return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
+  if (!record) {
+    console.error("[oauth/token] invalid_grant — code lookup failed. clientId:", clientId, "redirect_uri:", redirect_uri, "code_prefix:", code?.slice(0, 8));
+    return NextResponse.json({ error: "invalid_grant" }, { status: 400 });
+  }
 
   if (!verifyPkceS256(codeVerifier, record.codeChallenge)) {
+    console.error("[oauth/token] PKCE failed. challenge:", record.codeChallenge, "verifier_prefix:", codeVerifier?.slice(0, 8));
     return NextResponse.json({ error: "invalid_grant", error_description: "PKCE failed" }, { status: 400 });
   }
 
