@@ -148,14 +148,24 @@ function tokenMatches(token: string, expected: string): boolean {
 }
 
 const verifyToken = async (_req: Request, token?: string) => {
-  if (!token) return undefined;
+  if (!token) {
+    console.error("[mcp/auth] no token provided");
+    return undefined;
+  }
 
   const oauthRecord = await verifyAccessToken(token);
-  if (oauthRecord) return { token, scopes: oauthRecord.scopes.split(" "), clientId: oauthRecord.clientId };
+  if (oauthRecord) {
+    console.log("[mcp/auth] OAuth token OK, clientId:", oauthRecord.clientId);
+    return { token, scopes: oauthRecord.scopes.split(" "), clientId: oauthRecord.clientId };
+  }
 
   const expected = process.env.MCP_TOKEN;
-  if (expected && tokenMatches(token, expected)) return { token, scopes: ["read"], clientId: "claude-desktop" };
+  if (expected && tokenMatches(token, expected)) {
+    console.log("[mcp/auth] static MCP_TOKEN OK");
+    return { token, scopes: ["read"], clientId: "claude-desktop" };
+  }
 
+  console.error("[mcp/auth] token REJECTED, prefix:", token.slice(0, 10));
   return undefined;
 };
 
