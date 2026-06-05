@@ -83,5 +83,6 @@ export async function POST(req: NextRequest) {
   const callbackUrl = new URL(redirectUri);
   callbackUrl.searchParams.set("code", code);
   if (state) callbackUrl.searchParams.set("state", state);
-  return NextResponse.redirect(callbackUrl.toString());
+  // 302 (nicht 307) damit der Browser die Callback-URL per GET aufruft
+  return NextResponse.redirect(callbackUrl.toString(), { status: 302 });
 }
