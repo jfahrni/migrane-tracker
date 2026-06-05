@@ -1,4 +1,4 @@
-# Diese Datei kommt auf den Server (~/migrane-tracker/docker-compose.yml)
+# Diese Datei kommt auf den Server nach /srv/migrane-tracker/docker-compose.yml
 # Sie verwendet das fertige Image von ghcr.io statt lokal zu bauen.
 services:
   migrane-tracker:
@@ -6,12 +6,18 @@ services:
     container_name: migrane-tracker
     init: true
     restart: unless-stopped
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
+    env_file: .env
     volumes:
-      - migrane-data:/app/data
+      - ./data:/app/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.migrane-tracker.rule=Host(`migraene.fahrni.ch`)"
+      - "traefik.http.routers.migrane-tracker.entrypoints=websecure"
+      - "traefik.http.routers.migrane-tracker.tls.certresolver=letsencrypt"
+      - "traefik.http.services.migrane-tracker.loadbalancer.server.port=3000"
+    networks:
+      - traefik
 
-volumes:
-  migrane-data:
+networks:
+  traefik:
+    external: true
