@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
   experimental: {
     staleTimes: { dynamic: 0 },
   },
+  async rewrites() {
+    return [
+      // Claude Mobile verbindet sich auf /mcp und /sse (ohne /api/ Prefix)
+      { source: "/mcp", destination: "/api/mcp" },
+      { source: "/sse", destination: "/api/sse" },
+    ];
+  },
+
   async headers() {
     return [
       {
