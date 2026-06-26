@@ -9,18 +9,37 @@ datasource db {
 }
 
 model Attack {
-  id          String    @id @default(cuid())
-  startedAt   DateTime
-  endedAt     DateTime?
-  intensity   Int?      // 1-10 NRS
-  hasAura     Boolean?
-  auraType    String?   // "visual" | "sensory" | "speech" | "other"
-  triggers    String    @default("[]") // JSON string array of trigger slugs
-  notes       String?
-  medications String?
-  weather     String?   // JSON snapshot from OpenMeteo
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  startedAt      DateTime
+  endedAt        DateTime?
+  intensity      Int?      // Kopfschmerz-Intensität 0-10 NRS (0 = schmerzfrei)
+  auraSeverity   Int?      // Aura-Ausprägung 1-3 (leicht/mittel/stark), entkoppelt vom Schmerz
+  hasAura        Boolean?
+  auraType       String?   // "visual" | "sensory" | "speech" | "other"
+  hadPostdrome   Boolean?  // Postdrome ("Matschbirne") als auswertbares Flag
+  postdromeNotes String?   // optionaler Freitext zur Postdrome
+  triggers       String    @default("[]") // JSON string array of trigger slugs
+  notes          String?
+  medications    String?
+  weather        String?   // JSON snapshot from OpenMeteo
+  episodeGroupId String?   // gruppiert Schübe desselben Tages (mehrere Schübe = eine Episode)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([startedAt(sort: Desc)])
+  @@index([episodeGroupId])
+}
+
+// Medikamenten-Phasen — löst das lose CANDESARTAN_START_DATE aus der Env ab.
+// Erlaubt "Tag N"-Berechnung und mehrere Präparate über die Zeit.
+model Medication {
+  id        String    @id @default(cuid())
+  name      String
+  startedAt DateTime
+  endedAt   DateTime?
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@index([startedAt(sort: Desc)])
 }
