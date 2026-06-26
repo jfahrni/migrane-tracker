@@ -243,6 +243,8 @@ export async function logAttackEnd(input: {
   attackId?: string;
   endedAt?: string;
   notes?: string;
+  hadPostdrome?: boolean;
+  postdromeNotes?: string;
 }) {
   let attack;
   if (input.attackId) {
@@ -264,6 +266,8 @@ export async function logAttackEnd(input: {
       notes: input.notes
         ? [attack.notes, input.notes].filter(Boolean).join(" | ")
         : attack.notes,
+      ...(input.hadPostdrome !== undefined ? { hadPostdrome: input.hadPostdrome } : {}),
+      ...(input.postdromeNotes !== undefined ? { postdromeNotes: input.postdromeNotes } : {}),
     },
   });
 

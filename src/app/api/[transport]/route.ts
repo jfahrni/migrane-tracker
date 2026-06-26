@@ -55,14 +55,28 @@ const handler = createMcpHandler(
         description:
           "Erfasse den Beginn einer Migräne-Attacke. " +
           "Rufe dieses Tool auf, wenn der Nutzer erwähnt, dass er Migräne hat oder hatte. " +
-          "Frage vorher nach: Intensität (1-10), Aura (ja/nein + Typ), mögliche Trigger. " +
-          "Triggers dürfen als freier Text kommen — interpretiere die Aussagen des Nutzers und wähle passende Slugs aus der Tag-Bibliothek. " +
+          "\n\n" +
+          "ANWEISUNG — FÜHRE EINE KURZE ANAMNESE WIE EIN NEUROLOGE. " +
+          "Stelle gezielte Rückfragen, BEVOR du erfasst, damit die Daten auswertbar werden. " +
+          "Frage NICHT alles auf einmal ab: stelle 1–3 Fragen pro Nachricht, beginne mit dem Wichtigsten, und überspringe alles, was der Nutzer schon gesagt hat. " +
+          "Sei einfühlsam, nicht verhörend — bei einer akuten Attacke kurz halten, Details später nachholen. " +
+          "Leite so viel wie möglich aus dem Freitext ab, statt es zu erfragen. " +
+          "\n\n" +
+          "Anamnese-Checkliste (Reihenfolge nach Wichtigkeit):\n" +
+          "1. ZEITPUNKT: Wann genau hat es angefangen (Uhrzeit)? Bei rückwirkender Erfassung den Onset präzise festnageln — startedAt ohne Zeitzone wird als Europe/Zurich gewertet.\n" +
+          "2. AURA vs. SCHMERZ (diese Migräne ist oft aura-zentriert): Kam zuerst eine Aura? Visuell (Flimmern, Zickzack, Gesichtsfeldausfall), sensorisch (Kribbeln/Taubheit), Sprache? Wie ausgeprägt (leicht/mittel/stark → auraSeverity 1–3)? → hasAura, auraType, auraSeverity.\n" +
+          "3. KOPFSCHMERZ: Überhaupt Schmerz? Falls ja: Stärke 0–10, einseitig?, pulsierend/drückend?, schlimmer bei Bewegung? Falls reine Aura ohne Schmerz: intensity=0. → intensity.\n" +
+          "4. BEGLEITSYMPTOME: Übelkeit/Erbrechen, Licht-/Lärm-/Geruchsempfindlichkeit? (in notes festhalten).\n" +
+          "5. VORBOTEN (Prodrom, Stunden davor): Gähnen, Heißhunger, Stimmungs-/Energieänderung, Nackensteife? (in notes).\n" +
+          "6. AUSLÖSER letzte 24–48 h: Schlaf (zu wenig/schlecht/unregelmäßig), Mahlzeit ausgelassen/Hunger, zu wenig getrunken, Stress ODER Entspannung danach, Hormonzyklus, Bildschirm, Alkohol, Wetter/Zugluft/Temperaturwechsel. → triggers (passende Slugs wählen; Mehrfachnennung ok).\n" +
+          "7. MEDIKATION: Was genau, wann eingenommen, half es? → medications.\n" +
+          "\n" +
+          "Triggers dürfen als freier Text kommen — interpretiere die Aussagen und wähle passende Slugs aus der Tag-Bibliothek. " +
           "Wetterdaten werden automatisch abgerufen und relevante Wetter-Trigger automatisch ergänzt. " +
-          "startedAt ist optional — wenn der Nutzer rückwirkend erfasst, frage nach dem genauen Zeitpunkt. " +
+          "\n\n" +
           "WICHTIG: Lege IMMER eine kurze narrative Zusammenfassung im notes-Feld ab — in den eigenen Worten des Nutzers, verdichtet auf 1-2 Sätze. " +
-          "Diese Notiz bewahrt den Kontext, den die strukturierten Tags verlieren (z.B. WARUM Stress, was genau am Bildschirm, welche Vorgeschichte). " +
-          "Beispiel: 'Starke Attacke morgens. Gestern langer Bildschirmtag, kaum getrunken. Eigene Einschätzung: Überanstrengung + Dehydration.' " +
-          "Diese Migräne ist oft aura-zentriert: Kopfschmerz und Aura sind GETRENNTE Felder. Bei rein visueller, schmerzfreier Aura intensity=0 setzen und auraSeverity erfassen.",
+          "Diese Notiz bewahrt den Kontext, den die strukturierten Tags verlieren (z.B. WARUM Stress, was genau am Bildschirm, welche Vorgeschichte, Begleitsymptome, Vorboten). " +
+          "Beispiel: 'Flimmerskotom links ~20 Min, danach leichter Druck rechts (3/10). Gestern kurz geschlafen, morgens nüchtern. Eigene Einschätzung: Schlafmangel + Hunger.'",
         inputSchema: {
           intensity: z.number().int().min(0).max(10).optional().describe("Kopfschmerz-Intensität 0-10 (NRS), 0 = schmerzfrei (z.B. reine Aura)"),
           auraSeverity: z.number().int().min(1).max(3).optional().describe("Aura-Ausprägung 1-3 (1=leicht, 2=mittel, 3=stark) — unabhängig vom Schmerz"),
@@ -87,13 +101,21 @@ const handler = createMcpHandler(
         description:
           "Markiere eine Migräne-Attacke als beendet und erfasse die Dauer. " +
           "Wenn kein attackId angegeben wird, wird die jüngste offene Attacke abgeschlossen. " +
-          "endedAt ist optional (Standard: jetzt). " +
+          "endedAt ist optional (Standard: jetzt; naive Zeiten als Europe/Zurich). " +
           "Rufe dieses Tool auf, wenn der Nutzer sagt, dass es ihm besser geht oder die Migräne vorbei ist. " +
-          "Frage kurz nach, was geholfen hat (Schlaf, Medikament, Ruhe) und halte das narrativ in notes fest.",
+          "\n\n" +
+          "ANWEISUNG — kurze Abschluss-Anamnese, 1–2 Fragen genügen:\n" +
+          "1. WANN war es vorbei? (für endedAt / Dauer)\n" +
+          "2. WAS HAT GEHOLFEN? Medikament (welches, wie schnell), Schlaf, Ruhe, Dunkelheit — narrativ in notes.\n" +
+          "3. POSTDROME ('Matschbirne'): Fühlt sich der Nutzer danach benommen/erschöpft/'wie gerädert'? " +
+          "Wenn ja → hadPostdrome=true (+ optional postdromeNotes). " +
+          "Die Postdrome zeigt sich oft erst Stunden später — wenn unklar, kurz erwähnen, dass er sie später per update_attack nachtragen kann.",
         inputSchema: {
           attackId: z.string().optional().describe("ID der Attacke (optional — schliesst sonst die letzte offene)"),
-          endedAt: z.string().optional().describe("ISO-Datetime des Endes (Standard: jetzt)"),
+          endedAt: z.string().optional().describe("Datetime des Endes (Standard: jetzt; naive Zeiten als Europe/Zurich)"),
           notes: z.string().optional().describe("Narrative Abschluss-Notiz: Verlauf und was geholfen hat. Wird an die Start-Notiz angehängt."),
+          hadPostdrome: z.boolean().optional().describe("Postdrome / 'Matschbirne' nach der Attacke?"),
+          postdromeNotes: z.string().optional().describe("Optionaler Freitext zur Postdrome"),
         },
       },
       (args) => run("log_attack_end", () => logAttackEnd(args)),
