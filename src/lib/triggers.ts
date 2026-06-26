@@ -27,7 +27,10 @@ export const TRIGGER_TAGS = [
   { slug: "wetterumschlag", label: "Wetterumschlag", category: "Wetter" },
   { slug: "föhn", label: "Föhn", category: "Wetter" },
   { slug: "hitze", label: "Hitze", category: "Wetter" },
+  { slug: "kälte", label: "Kälte", category: "Wetter" },
   { slug: "luftdruckabfall", label: "Luftdruckabfall", category: "Wetter" },
+  { slug: "temperaturwechsel", label: "Temperaturwechsel", category: "Wetter" },
+  { slug: "zugluft", label: "Zugluft", category: "Wetter" },
   // Körper
   { slug: "nackenverspannung", label: "Nackenverspannung", category: "Körper" },
   { slug: "bruxismus", label: "Bruxismus / Zähneknirschen", category: "Körper" },

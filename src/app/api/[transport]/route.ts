@@ -8,6 +8,9 @@ import {
   updateAttack,
   listAttacks,
   getStatistics,
+  listMedications,
+  setMedication,
+  auditTimestamps,
 } from "@/lib/mcp";
 import { verifyAccessToken } from "@/lib/oauth";
 import { TRIGGER_TAGS } from "@/lib/triggers";
@@ -58,15 +61,20 @@ const handler = createMcpHandler(
           "startedAt ist optional — wenn der Nutzer rückwirkend erfasst, frage nach dem genauen Zeitpunkt. " +
           "WICHTIG: Lege IMMER eine kurze narrative Zusammenfassung im notes-Feld ab — in den eigenen Worten des Nutzers, verdichtet auf 1-2 Sätze. " +
           "Diese Notiz bewahrt den Kontext, den die strukturierten Tags verlieren (z.B. WARUM Stress, was genau am Bildschirm, welche Vorgeschichte). " +
-          "Beispiel: 'Starke Attacke morgens. Gestern langer Bildschirmtag, kaum getrunken. Eigene Einschätzung: Überanstrengung + Dehydration.'",
+          "Beispiel: 'Starke Attacke morgens. Gestern langer Bildschirmtag, kaum getrunken. Eigene Einschätzung: Überanstrengung + Dehydration.' " +
+          "Diese Migräne ist oft aura-zentriert: Kopfschmerz und Aura sind GETRENNTE Felder. Bei rein visueller, schmerzfreier Aura intensity=0 setzen und auraSeverity erfassen.",
         inputSchema: {
-          intensity: z.number().int().min(1).max(10).optional().describe("Schmerzintensität 1-10 (NRS)"),
+          intensity: z.number().int().min(0).max(10).optional().describe("Kopfschmerz-Intensität 0-10 (NRS), 0 = schmerzfrei (z.B. reine Aura)"),
+          auraSeverity: z.number().int().min(1).max(3).optional().describe("Aura-Ausprägung 1-3 (1=leicht, 2=mittel, 3=stark) — unabhängig vom Schmerz"),
           hasAura: z.boolean().optional().describe("Hatte die Attacke eine Aura?"),
           auraType: z.enum(["visual", "sensory", "speech", "other"]).optional().describe("Art der Aura"),
+          hadPostdrome: z.boolean().optional().describe("Postdrome / 'Matschbirne' nach der Attacke?"),
+          postdromeNotes: z.string().optional().describe("Optionaler Freitext zur Postdrome"),
           triggers: z.array(z.string()).optional().describe(`Trigger-Tags aus der Bibliothek: ${TRIGGER_SLUGS.join(", ")}`),
           notes: z.string().optional().describe("Narrative Zusammenfassung in den Worten des Nutzers (1-2 Sätze) — bewahrt Kontext jenseits der Tags. IMMER ausfüllen."),
           medications: z.string().optional().describe("Eingenommene Medikamente"),
-          startedAt: z.string().optional().describe("ISO-Datetime für rückwirkende Einträge"),
+          startedAt: z.string().optional().describe("Datetime für rückwirkende Einträge. Naive Zeiten (ohne Offset) werden als Europe/Zurich interpretiert."),
+          episodeGroupId: z.string().optional().describe("Optional: gemeinsame ID, um mehrere Schübe desselben Tages zu einer Episode zu gruppieren."),
         },
       },
       (args) => run("log_attack_start", () => logAttackStart(args)),
@@ -100,14 +108,18 @@ const handler = createMcpHandler(
           "Nützlich wenn der Nutzer nachträglich Informationen ergänzen oder korrigieren will.",
         inputSchema: {
           attackId: z.string().describe("ID der zu aktualisierenden Attacke"),
-          intensity: z.number().int().min(1).max(10).optional(),
+          intensity: z.number().int().min(0).max(10).optional().describe("Kopfschmerz 0-10 (0 = schmerzfrei)"),
+          auraSeverity: z.number().int().min(1).max(3).optional().describe("Aura-Ausprägung 1-3"),
           hasAura: z.boolean().optional(),
           auraType: z.enum(["visual", "sensory", "speech", "other"]).optional(),
+          hadPostdrome: z.boolean().optional(),
+          postdromeNotes: z.string().optional(),
           triggers: z.array(z.string()).optional(),
           notes: z.string().optional(),
           medications: z.string().optional(),
-          startedAt: z.string().optional(),
-          endedAt: z.string().optional(),
+          startedAt: z.string().optional().describe("Naive Zeiten werden als Europe/Zurich interpretiert."),
+          endedAt: z.string().optional().describe("Naive Zeiten werden als Europe/Zurich interpretiert."),
+          episodeGroupId: z.string().optional(),
         },
       },
       (args) => run("update_attack", () => updateAttack(args)),
@@ -132,13 +144,60 @@ const handler = createMcpHandler(
       {
         title: "Statistiken abrufen",
         description:
-          "Detaillierte Auswertung: monatliche Häufigkeit, Trigger-Verteilung, Intensitäts-Trend, " +
-          "Tageszeit-Muster und Candesartan-Vergleich (falls Startdatum konfiguriert).",
+          "Detaillierte Auswertung: monatliche Häufigkeit, Trigger-Verteilung, Intensitäts-Trend (inkl. schmerzfreier Auren), " +
+          "Aura-Ausprägung, Postdrome-Häufigkeit, Tageszeit-Muster (Europe/Zurich), Wetter-Korrelation (Druck/Föhn aus persistierten Snapshots) " +
+          "und Medikamenten-Vergleich (vorher/nachher, nur bei echter Baseline).",
         inputSchema: {
           months: z.number().int().min(1).max(24).optional().describe("Analysezeitraum in Monaten (Standard: 6)"),
         },
       },
       (args) => run("get_statistics", () => getStatistics(args)),
+    );
+
+    server.registerTool(
+      "list_medications",
+      {
+        title: "Medikamente auflisten",
+        description:
+          "Listet erfasste Medikamenten-Phasen mit Startdatum und berechnetem 'Tag N' (für laufende Präparate). " +
+          "Löst das alte CANDESARTAN_START_DATE aus der Env ab.",
+        inputSchema: {},
+      },
+      () => run("list_medications", listMedications),
+    );
+
+    server.registerTool(
+      "set_medication",
+      {
+        title: "Medikament anlegen/ändern",
+        description:
+          "Legt eine Medikamenten-Phase an oder aktualisiert sie. Ohne id wird ein neuer Eintrag erstellt (name + startedAt erforderlich). " +
+          "Mit id werden nur die angegebenen Felder geändert. endedAt setzen, wenn ein Präparat abgesetzt wird.",
+        inputSchema: {
+          id: z.string().optional().describe("ID zum Aktualisieren (weglassen für neuen Eintrag)"),
+          name: z.string().optional().describe("Präparatname, z.B. 'Candesartan'"),
+          startedAt: z.string().optional().describe("Startdatum (naive Zeiten als Europe/Zurich)"),
+          endedAt: z.string().optional().describe("Absetzdatum (optional)"),
+          notes: z.string().optional(),
+        },
+      },
+      (args) => run("set_medication", () => setMedication(args)),
+    );
+
+    server.registerTool(
+      "audit_timestamps",
+      {
+        title: "Zeitstempel prüfen",
+        description:
+          "Listet Attacken zur manuellen Zeitzonen-Prüfung (Onset in Europe/Zurich + UTC-Instant). " +
+          "Markiert unplausible Nacht-Onsets (00–05 Uhr) als 'suspicious'. " +
+          "Hintergrund: Früher wurden naive Zeiten ohne Offset als UTC gespeichert (2 h zu spät). " +
+          "Korrektur eines Eintrags erfolgt über update_attack mit der korrekten Lokalzeit.",
+        inputSchema: {
+          limit: z.number().int().min(1).max(500).optional().describe("Maximale Anzahl (Standard: 100)"),
+        },
+      },
+      (args) => run("audit_timestamps", () => auditTimestamps(args)),
     );
   },
   {},
