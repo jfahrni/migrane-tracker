@@ -31,6 +31,32 @@ async function run<T>(label: string, fn: () => Promise<T>): Promise<ToolResult> 
 
 const TRIGGER_SLUGS = TRIGGER_TAGS.map((t) => t.slug);
 
+// ── Tolerante Zod-Helfer ─────────────────────────────────────────────────────
+// Die MCP-Bridge übergibt numerische und boolesche Argumente häufig als String
+// ("0", "1", "true"). Strikte z.number()/z.boolean() lehnen das mit invalid_type
+// ab und verwerfen den GESAMTEN Request. Diese Helfer parsen tolerant.
+
+/** String→Zahl coercen. Leerer String / null → undefined (statt 0). */
+const zInt = (min: number, max: number) =>
+  z
+    .preprocess(
+      (v) => (v === "" || v === null ? undefined : v),
+      z.coerce.number().int().min(min).max(max).optional(),
+    )
+    .optional();
+
+/** Toleranter Boolean-Parser. NICHT z.coerce.boolean() verwenden —
+ *  Boolean("false") === true wäre ein stiller Datenfehler. */
+const zBool = (): z.ZodType<boolean | undefined> =>
+  z
+    .preprocess((v) => {
+      if (typeof v === "boolean") return v;
+      if (v === "true" || v === "1" || v === 1) return true;
+      if (v === "false" || v === "0" || v === 0) return false;
+      return v; // bleibt invalid, falls wirklich Müll
+    }, zBool())
+    .optional();
+
 const handler = createMcpHandler(
   (server) => {
     server.registerTool(
@@ -78,11 +104,11 @@ const handler = createMcpHandler(
           "Diese Notiz bewahrt den Kontext, den die strukturierten Tags verlieren (z.B. WARUM Stress, was genau am Bildschirm, welche Vorgeschichte, Begleitsymptome, Vorboten). " +
           "Beispiel: 'Flimmerskotom links ~20 Min, danach leichter Druck rechts (3/10). Gestern kurz geschlafen, morgens nüchtern. Eigene Einschätzung: Schlafmangel + Hunger.'",
         inputSchema: {
-          intensity: z.number().int().min(0).max(10).optional().describe("Kopfschmerz-Intensität 0-10 (NRS), 0 = schmerzfrei (z.B. reine Aura)"),
-          auraSeverity: z.number().int().min(1).max(3).optional().describe("Aura-Ausprägung 1-3 (1=leicht, 2=mittel, 3=stark) — unabhängig vom Schmerz"),
-          hasAura: z.boolean().optional().describe("Hatte die Attacke eine Aura?"),
+          intensity: zInt(0, 10).describe("Kopfschmerz-Intensität 0-10 (NRS), 0 = schmerzfrei (z.B. reine Aura)"),
+          auraSeverity: zInt(1, 3).describe("Aura-Ausprägung 1-3 (1=leicht, 2=mittel, 3=stark) — unabhängig vom Schmerz"),
+          hasAura: zBool().describe("Hatte die Attacke eine Aura?"),
           auraType: z.enum(["visual", "sensory", "speech", "other"]).optional().describe("Art der Aura"),
-          hadPostdrome: z.boolean().optional().describe("Postdrome / 'Matschbirne' nach der Attacke?"),
+          hadPostdrome: zBool().describe("Postdrome / 'Matschbirne' nach der Attacke?"),
           postdromeNotes: z.string().optional().describe("Optionaler Freitext zur Postdrome"),
           triggers: z.array(z.string()).optional().describe(`Trigger-Tags aus der Bibliothek: ${TRIGGER_SLUGS.join(", ")}`),
           notes: z.string().optional().describe("Narrative Zusammenfassung in den Worten des Nutzers (1-2 Sätze) — bewahrt Kontext jenseits der Tags. IMMER ausfüllen."),
@@ -114,7 +140,7 @@ const handler = createMcpHandler(
           attackId: z.string().optional().describe("ID der Attacke (optional — schliesst sonst die letzte offene)"),
           endedAt: z.string().optional().describe("Datetime des Endes (Standard: jetzt; naive Zeiten als Europe/Zurich)"),
           notes: z.string().optional().describe("Narrative Abschluss-Notiz: Verlauf und was geholfen hat. Wird an die Start-Notiz angehängt."),
-          hadPostdrome: z.boolean().optional().describe("Postdrome / 'Matschbirne' nach der Attacke?"),
+          hadPostdrome: zBool().describe("Postdrome / 'Matschbirne' nach der Attacke?"),
           postdromeNotes: z.string().optional().describe("Optionaler Freitext zur Postdrome"),
         },
       },
@@ -130,11 +156,11 @@ const handler = createMcpHandler(
           "Nützlich wenn der Nutzer nachträglich Informationen ergänzen oder korrigieren will.",
         inputSchema: {
           attackId: z.string().describe("ID der zu aktualisierenden Attacke"),
-          intensity: z.number().int().min(0).max(10).optional().describe("Kopfschmerz 0-10 (0 = schmerzfrei)"),
-          auraSeverity: z.number().int().min(1).max(3).optional().describe("Aura-Ausprägung 1-3"),
-          hasAura: z.boolean().optional(),
+          intensity: zInt(0, 10).describe("Kopfschmerz 0-10 (0 = schmerzfrei)"),
+          auraSeverity: zInt(1, 3).describe("Aura-Ausprägung 1-3"),
+          hasAura: zBool(),
           auraType: z.enum(["visual", "sensory", "speech", "other"]).optional(),
-          hadPostdrome: z.boolean().optional(),
+          hadPostdrome: zBool(),
           postdromeNotes: z.string().optional(),
           triggers: z.array(z.string()).optional(),
           notes: z.string().optional(),
@@ -153,7 +179,7 @@ const handler = createMcpHandler(
         title: "Attacken auflisten",
         description: "Gibt eine Liste vergangener Attacken zurück, neueste zuerst.",
         inputSchema: {
-          limit: z.number().int().min(1).max(100).optional().describe("Maximale Anzahl (Standard: 20)"),
+          limit: zInt(1, 100).describe("Maximale Anzahl (Standard: 20)"),
           fromDate: z.string().optional().describe("Von-Datum (ISO-Format)"),
           toDate: z.string().optional().describe("Bis-Datum (ISO-Format)"),
         },
@@ -170,7 +196,7 @@ const handler = createMcpHandler(
           "Aura-Ausprägung, Postdrome-Häufigkeit, Tageszeit-Muster (Europe/Zurich), Wetter-Korrelation (Druck/Föhn aus persistierten Snapshots) " +
           "und Medikamenten-Vergleich (vorher/nachher, nur bei echter Baseline).",
         inputSchema: {
-          months: z.number().int().min(1).max(24).optional().describe("Analysezeitraum in Monaten (Standard: 6)"),
+          months: zInt(1, 24).describe("Analysezeitraum in Monaten (Standard: 6)"),
         },
       },
       (args) => run("get_statistics", () => getStatistics(args)),
@@ -216,7 +242,7 @@ const handler = createMcpHandler(
           "Hintergrund: Früher wurden naive Zeiten ohne Offset als UTC gespeichert (2 h zu spät). " +
           "Korrektur eines Eintrags erfolgt über update_attack mit der korrekten Lokalzeit.",
         inputSchema: {
-          limit: z.number().int().min(1).max(500).optional().describe("Maximale Anzahl (Standard: 100)"),
+          limit: zInt(1, 500).describe("Maximale Anzahl (Standard: 100)"),
         },
       },
       (args) => run("audit_timestamps", () => auditTimestamps(args)),
