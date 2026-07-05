@@ -256,6 +256,60 @@ const verifyToken = async (_req: Request, token?: string) => {
 
 const authHandler = withMcpAuth(handler, verifyToken, { required: true });
 
+// ── String→Zahl/Bool-Coercion an der Transport-Grenze ────────────────────────
+// Die MCP-Bridge übergibt numerische/boolesche Tool-Argumente oft als String
+// ("0", "1", "true"). Statt das Zod-Schema tolerant zu machen (z.preprocess/
+// z.coerce lösten im gebündelten Next-Build eine Endlos-Rekursion im
+// zod-to-json-schema-Konverter aus → Stack Overflow), coercen wir hier den
+// JSON-RPC-Body VOR der SDK-Validierung. Das Schema bleibt strikt und sicher.
+const NUM_KEYS = new Set(["intensity", "auraSeverity", "limit", "months"]);
+const BOOL_KEYS = new Set(["hasAura", "hadPostdrome"]);
+
+function coerceArgs(args: Record<string, unknown>): void {
+  for (const k of Object.keys(args)) {
+    const v = args[k];
+    if (typeof v === "string" && NUM_KEYS.has(k)) {
+      if (v === "") { delete args[k]; continue; }
+      const n = Number(v);
+      if (Number.isFinite(n)) args[k] = n;
+    } else if (typeof v === "string" && BOOL_KEYS.has(k)) {
+      if (v === "true" || v === "1") args[k] = true;
+      else if (v === "false" || v === "0") args[k] = false;
+    }
+  }
+}
+
+/** Liest den JSON-RPC-Body, coerct tools/call-Argumente und baut den Request neu. */
+async function coerceRequestBody(req: Request): Promise<Request> {
+  const ct = req.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) return req;
+
+  let text: string;
+  try { text = await req.text(); } catch { return req; }
+  if (!text) return req;
+
+  let coerced = text;
+  try {
+    const msg = JSON.parse(text);
+    const args = msg?.params?.arguments;
+    if (args && typeof args === "object" && !Array.isArray(args)) {
+      coerceArgs(args as Record<string, unknown>);
+      coerced = JSON.stringify(msg);
+    }
+  } catch {
+    // Kein gültiges JSON → unverändert durchreichen (SDK behandelt den Fehler).
+    return rebuildRequest(req, text);
+  }
+
+  return rebuildRequest(req, coerced);
+}
+
+function rebuildRequest(req: Request, body: string): Request {
+  const headers = new Headers(req.headers);
+  headers.delete("content-length"); // Body-Länge kann sich geändert haben
+  return new Request(req.url, { method: req.method, headers, body });
+}
+
 function gated(h: (req: Request) => Promise<Response>) {
   return async (req: Request): Promise<Response> => {
     if (process.env.ENABLE_MCP !== "true") return new Response("Not Found", { status: 404 });
@@ -264,4 +318,4 @@ function gated(h: (req: Request) => Promise<Response>) {
 }
 
 export const GET = gated(authHandler);
-export const POST = gated(authHandler);
+export const POST = gated(async (req: Request) => authHandler(await coerceRequestBody(req)));
