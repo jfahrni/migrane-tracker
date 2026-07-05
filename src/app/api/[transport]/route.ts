@@ -268,11 +268,12 @@ const BOOL_KEYS = new Set(["hasAura", "hadPostdrome"]);
 function coerceArgs(args: Record<string, unknown>): void {
   for (const k of Object.keys(args)) {
     const v = args[k];
-    if (typeof v === "string" && NUM_KEYS.has(k)) {
+    if (typeof v !== "string") continue; // Bridge stringify't nur — Nicht-Strings unangetastet
+    if (NUM_KEYS.has(k)) {
       if (v === "") { delete args[k]; continue; }
       const n = Number(v);
       if (Number.isFinite(n)) args[k] = n;
-    } else if (typeof v === "string" && BOOL_KEYS.has(k)) {
+    } else if (BOOL_KEYS.has(k)) {
       if (v === "true" || v === "1") args[k] = true;
       else if (v === "false" || v === "0") args[k] = false;
     }
