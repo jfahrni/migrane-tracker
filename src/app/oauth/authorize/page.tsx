@@ -1,4 +1,6 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { verifySession, SESSION_COOKIE } from "@/lib/session";
 
 interface Props {
   searchParams: Promise<{
@@ -17,6 +19,21 @@ export default async function ConsentPage({ searchParams }: Props) {
 
   if (!client_id || !redirect_uri || !code_challenge) redirect("/");
 
+  // Consent erfordert eine gültige Session. Ist keine da, zuerst einloggen —
+  // mit next=<diese Consent-URL>, damit der OAuth-Flow danach nahtlos weiterläuft.
+  const cookieStore = await cookies();
+  const user = await verifySession(cookieStore.get(SESSION_COOKIE)?.value);
+  if (!user) {
+    const qs = new URLSearchParams({
+      client_id, redirect_uri,
+      scope: scope ?? "read",
+      state: state ?? "",
+      code_challenge,
+      client_name: client_name ?? "",
+    });
+    redirect(`/login?next=${encodeURIComponent(`/oauth/authorize?${qs.toString()}`)}`);
+  }
+
   return (
     <main className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
       <div className="w-full max-w-sm bg-zinc-900 rounded-2xl border border-zinc-800 p-8 space-y-6">
@@ -27,6 +44,7 @@ export default async function ConsentPage({ searchParams }: Props) {
             <span className="text-white font-medium">{client_name ?? "Ein Client"}</span>
             {" "}möchte auf deinen Migräne-Tracker zugreifen.
           </p>
+          <p className="text-xs text-zinc-500">Angemeldet als {user}</p>
         </div>
 
         <form action="/api/oauth/authorize" method="post" className="space-y-4">
@@ -35,20 +53,6 @@ export default async function ConsentPage({ searchParams }: Props) {
           <input type="hidden" name="scope" value={scope ?? "read"} />
           <input type="hidden" name="state" value={state ?? ""} />
           <input type="hidden" name="code_challenge" value={code_challenge} />
-
-          <div className="space-y-1">
-            <label className="text-xs text-zinc-400 uppercase tracking-wide">PIN</label>
-            <input
-              type="password"
-              name="pin"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              autoComplete="off"
-              required
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-white text-center text-xl tracking-widest focus:outline-none focus:ring-2 focus:ring-violet-500"
-              placeholder="••••"
-            />
-          </div>
 
           <button
             type="submit"

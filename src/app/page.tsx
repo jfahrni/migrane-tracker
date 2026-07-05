@@ -67,6 +67,12 @@ export default async function Dashboard() {
           <h1 className="text-xl font-semibold">Migräne-Tracker</h1>
           <p className="text-sm text-zinc-500">Letzte 90 Tage</p>
         </div>
+        <a
+          href="/api/auth/logout"
+          className="ml-auto text-sm text-zinc-400 hover:text-white border border-zinc-800 hover:border-zinc-600 rounded-lg px-3 py-1.5 transition-colors"
+        >
+          Abmelden
+        </a>
       </header>
 
       {/* KPIs */}

@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getClient, clientAllowsRedirect, createAuthorizationCode, scopesValid } from "@/lib/oauth";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { timingSafeEqual, createHash } from "crypto";
-
-function pinMatches(input: string, expected: string): boolean {
-  const a = createHash("sha256").update(input).digest();
-  const b = createHash("sha256").update(expected).digest();
-  return timingSafeEqual(a, b);
-}
+import { verifySession, SESSION_COOKIE } from "@/lib/session";
 
 /** GET: validate OAuth params, redirect to consent page */
 export async function GET(req: NextRequest) {
@@ -62,16 +56,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "too_many_requests" }, { status: 429 });
   }
 
+  // Consent nur mit gültiger Session (echtes Login) — ersetzt die frühere PIN-Prüfung.
+  const user = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
+  if (!user) {
+    return NextResponse.json({ error: "access_denied", error_description: "Nicht angemeldet" }, { status: 403 });
+  }
+
   let body: Record<string, string>;
   try { body = Object.fromEntries((await req.formData()).entries()) as Record<string, string>; }
   catch { return NextResponse.json({ error: "invalid_request" }, { status: 400 }); }
 
-  const { client_id: clientId, redirect_uri: redirectUri, scope, state, code_challenge: codeChallenge, pin } = body;
-
-  const expectedPin = process.env.MCP_CONSENT_PIN;
-  if (!expectedPin || !pin || !pinMatches(pin, expectedPin)) {
-    return NextResponse.json({ error: "access_denied", error_description: "Falscher PIN" }, { status: 403 });
-  }
+  const { client_id: clientId, redirect_uri: redirectUri, scope, state, code_challenge: codeChallenge } = body;
 
   if (!clientId || !redirectUri || !codeChallenge) return NextResponse.json({ error: "invalid_request" }, { status: 400 });
 
