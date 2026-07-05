@@ -34,7 +34,17 @@ export async function fetchWeather(): Promise<WeatherSnapshot | null> {
       `&past_hours=4&forecast_hours=0` +
       `&timezone=Europe%2FZurich`;
 
-    const res = await fetch(url, { next: { revalidate: 0 } });
+    // Hartes Timeout: Wetter ist optional. Ohne Timeout würde ein hängender
+    // Fetch (open-meteo nicht erreichbar/langsam) den gesamten Tool-Aufruf
+    // blockieren und bei Retries den Server sättigen. Lieber ohne Wetter erfassen.
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 4000);
+    let res: Response;
+    try {
+      res = await fetch(url, { next: { revalidate: 0 }, signal: ctrl.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
     if (!res.ok) return null;
     const data = await res.json();
 
