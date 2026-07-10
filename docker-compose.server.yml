@@ -22,7 +22,9 @@ services:
       start_period: 30s
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.migrane-tracker.rule=Host(`migraene.fahrni.ch`)"
+      # Alias "migrane" (ohne e): DNS zeigt schon hierher, sonst endet die Schreibweise
+      # beim Traefik-Default-Cert + 404. Cert deckt per SAN beide Namen ab.
+      - "traefik.http.routers.migrane-tracker.rule=Host(`migraene.fahrni.ch`) || Host(`migrane.fahrni.ch`)"
       - "traefik.http.routers.migrane-tracker.entrypoints=websecure"
       - "traefik.http.routers.migrane-tracker.tls.certresolver=letsencrypt"
       - "traefik.http.services.migrane-tracker.loadbalancer.server.port=3000"

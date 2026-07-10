@@ -429,7 +429,13 @@ const verifyToken = async (_req: Request, token?: string) => {
 async function buildAuthHandler(): Promise<(req: Request) => Promise<Response>> {
   const instructions = await buildServerInstructions();
   const handler = createMcpHandler(registerTools, { instructions }, { basePath: "/api", maxDuration: 60 });
-  return withMcpAuth(handler, verifyToken, { required: true });
+  // resourceMetadataPath: der 401-WWW-Authenticate-Header muss auf die pfad-suffigierte
+  // Metadata-Variante zeigen (RFC 9728) — Browser-Clients (claude.ai Web/Desktop) validieren
+  // deren `resource`-Feld strikt gegen die MCP-URL und brechen sonst ab.
+  return withMcpAuth(handler, verifyToken, {
+    required: true,
+    resourceMetadataPath: "/.well-known/oauth-protected-resource/api/mcp",
+  });
 }
 
 /** Memoisiert: einmal beim ersten Request gebaut. Die Instructions (inkl. eingebettetem Abbild der
