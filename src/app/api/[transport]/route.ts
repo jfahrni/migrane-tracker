@@ -15,6 +15,7 @@ import {
   upsertHistory,
   deleteHistory,
   setStandingInstructions,
+  getStandingInstructions,
   HISTORY_TYPES,
   DATE_PRECISIONS,
 } from "@/lib/mcp";
@@ -37,8 +38,8 @@ async function run<T>(label: string, fn: () => Promise<T>): Promise<ToolResult> 
 
 const TRIGGER_SLUGS = TRIGGER_TAGS.map((t) => t.slug);
 
-const handler = createMcpHandler(
-  (server) => {
+function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]>[0]) {
+  {
     server.registerTool(
       "get_overview",
       {
@@ -321,24 +322,66 @@ const handler = createMcpHandler(
       },
       (args) => run("delete_history", () => deleteHistory(args)),
     );
-  },
-  {
-    // Protokoll-seitige Server-Instructions (beim initialize ausgeliefert).
-    // Sie zeigen bewusst auf clinicalBriefing, weil dieser Text hier beim Start
-    // memoisiert wird — der jeweils frische Stand steht in get_overview.
-    instructions:
-      "Migräne-Tracker. Erfasst Attacken, Medikamentenphasen und die Krankengeschichte.\n\n" +
-      "VERBINDLICH: Rufe get_overview am Anfang JEDER Unterhaltung auf und lies das Feld " +
-      "clinicalBriefing.readFirst ZUERST — es steht ganz oben in der Antwort. Es nennt die Grenzen " +
-      "der Daten (Fenstergröße, Reichweite der Krankengeschichte) sowie die dauerhaften Anweisungen " +
-      "des Nutzers. Interpretiere KEINE Attacken-Daten, bevor du es gelesen hast.\n\n" +
-      "Datumsangaben mit vorangestelltem 'ca.' sind Näherungen, keine belegten Daten — behandle sie " +
-      "niemals als Fakten und leite daraus keine exakten Zeiträume oder Tageszählungen ab.\n\n" +
-      "Das Datenfenster von get_overview ist kurz (30 Tage); die Krankengeschichte in patientHistory " +
-      "reicht deutlich weiter zurück. Ein Trend im Fenster ist kein Trend der Erkrankung.",
-  },
-  { basePath: "/api", maxDuration: 60 },
-);
+  }
+}
+
+// ── Server-Instructions (beim initialize ausgeliefert) ───────────────────────
+// Drei Teile, analog zum Chastity-Tracker:
+//  1. Befehlsliste / Tool-Wahl — damit die Befehlsfläche ohne Raten klar ist.
+//  2. Zeiger auf das Pflicht-Briefing (der frische Stand steht in get_overview).
+//  3. Wörtliches Abbild der dauerhaften Anweisungen (Stand beim Server-Start).
+
+const MCP_SERVER_INSTRUCTIONS =
+  "Migräne-Tracker MCP. Erfasst Attacken, Medikamentenphasen und die Krankengeschichte.\n\n" +
+  "BEFEHLE / Tool-Wahl:\n" +
+  "• IMMER ZUERST → `get_overview`: offene Attacken, `clinicalBriefing` (Pflichtlektüre), " +
+  "`patientHistory` (Vorgeschichte), 30-Tage-Statistik, aktuelle Medikation.\n" +
+  "• ERFASSEN → `log_attack_start` (Onset; führe dabei eine kurze Anamnese wie ein Neurologe), " +
+  "`log_attack_end` (Abschluss: Dauer + was geholfen hat + Postdrome), " +
+  "`update_attack` (Korrektur/Nachtrag an einer bestehenden Attacke).\n" +
+  "• AUSWERTEN → `list_attacks` (Rohliste), `get_statistics` (Frequenz, Trigger, Tageszeit, " +
+  "Medikamenten-Vergleich), `audit_timestamps` (Zeitzonen-Prüfung verdächtiger Nacht-Onsets).\n" +
+  "• VORGESCHICHTE → `list_history` (nach Typ filterbar), `upsert_history` (anlegen/ändern, " +
+  "typisiert: ONSET, PRIOR_PATTERN, IMAGING, DIAGNOSIS, COMORBID_EVENT, MEDICATION_PAST, FAMILY, " +
+  "CARE_CONTEXT, OTHER), `delete_history` (Fehleinträge entfernen).\n" +
+  "• MEDIKATION → `list_medications`, `set_medication` (Phasen anlegen/absetzen).\n" +
+  "• REGELN → `set_standing_instructions`: dauerhafte Anweisungen des Nutzers; sie erscheinen " +
+  "danach in `get_overview.clinicalBriefing.readFirst`.\n\n" +
+  "Attacken lassen sich NICHT löschen — Fehleinträge werden per `update_attack` korrigiert oder " +
+  "über `episodeGroupId` zusammengefasst. Nur Anamnese-Einträge sind löschbar.\n\n" +
+  "DATIERUNG: Angaben mit vorangestelltem 'ca.' sind Näherungen, keine belegten Daten. Behandle sie " +
+  "niemals als Fakten und leite daraus keine exakten Zeiträume oder Tageszählungen ab. Beim Erfassen " +
+  "unscharfer Zeitpunkte `precision` (YEAR|MONTH|DAY) und `approximate=true` setzen, statt ein Datum " +
+  "hinzubiegen.\n\n" +
+  "Das Datenfenster von `get_overview` ist kurz (30 Tage); die Krankengeschichte reicht deutlich " +
+  "weiter zurück. Ein Trend im Fenster ist kein Trend der Erkrankung.";
+
+const BRIEFING_POINTER =
+  "\n\nVERBINDLICHES BRIEFING: Rufe `get_overview` am Anfang JEDER Unterhaltung auf und lies " +
+  "`clinicalBriefing.readFirst` ZUERST — es steht als erstes Feld in der Antwort und nennt die " +
+  "Grenzen der Daten sowie die dauerhaften Anweisungen des Nutzers. Immer frisch von dort lesen, " +
+  "da sie sich jederzeit ändern können. Interpretiere KEINE Attacken-Daten, bevor du es gelesen hast.";
+
+/** Basis + Zeiger + (best effort) wörtliches Abbild der aktuellen dauerhaften Anweisungen.
+ *  Das Abbild spiegelt den Stand beim Server-START (Refresh erst bei Deploy/Neustart) — der
+ *  maßgebliche, frische Wert bleibt clinicalBriefing (siehe Zeiger). DB-Zugriff nur zur Laufzeit
+ *  unter nodejs, nie zur Build-/Edge-Zeit. */
+async function buildServerInstructions(): Promise<string> {
+  let instructions = MCP_SERVER_INSTRUCTIONS + BRIEFING_POINTER;
+  if (process.env.NEXT_RUNTIME === "nodejs") {
+    try {
+      const standing = await getStandingInstructions();
+      if (standing) {
+        instructions +=
+          "\n\nAKTUELLE DAUERHAFTE ANWEISUNGEN (Abbild beim Server-Start — der frische Stand bleibt " +
+          "get_overview.clinicalBriefing.standingInstructions):\n" + standing;
+      }
+    } catch {
+      // best effort: fehlende DB darf den MCP-Endpoint nicht blockieren
+    }
+  }
+  return instructions;
+}
 
 function tokenMatches(token: string, expected: string): boolean {
   const a = createHash("sha256").update(token).digest();
@@ -368,7 +411,18 @@ const verifyToken = async (_req: Request, token?: string) => {
   return undefined;
 };
 
-const authHandler = withMcpAuth(handler, verifyToken, { required: true });
+async function buildAuthHandler(): Promise<(req: Request) => Promise<Response>> {
+  const instructions = await buildServerInstructions();
+  const handler = createMcpHandler(registerTools, { instructions }, { basePath: "/api", maxDuration: 60 });
+  return withMcpAuth(handler, verifyToken, { required: true });
+}
+
+/** Memoisiert: einmal beim ersten Request gebaut. Die Instructions (inkl. eingebettetem Abbild der
+ *  dauerhaften Anweisungen) entsprechen dem Stand beim Server-Start; Refresh bei Deploy/Neustart. */
+let authHandlerPromise: Promise<(req: Request) => Promise<Response>> | null = null;
+function getAuthHandler(): Promise<(req: Request) => Promise<Response>> {
+  return (authHandlerPromise ??= buildAuthHandler());
+}
 
 // ── String→Zahl/Bool-Coercion an der Transport-Grenze ────────────────────────
 // Die MCP-Bridge übergibt numerische/boolesche Tool-Argumente oft als String
@@ -432,5 +486,5 @@ function gated(h: (req: Request) => Promise<Response>) {
   };
 }
 
-export const GET = gated(authHandler);
-export const POST = gated(async (req: Request) => authHandler(await coerceRequestBody(req)));
+export const GET = gated(async (req: Request) => (await getAuthHandler())(req));
+export const POST = gated(async (req: Request) => (await getAuthHandler())(await coerceRequestBody(req)));
