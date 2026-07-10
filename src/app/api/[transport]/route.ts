@@ -457,11 +457,26 @@ function getAuthHandler(): Promise<(req: Request) => Promise<Response>> {
 // JSON-RPC-Body VOR der SDK-Validierung. Das Schema bleibt strikt und sicher.
 const NUM_KEYS = new Set(["intensity", "auraSeverity", "limit", "months"]);
 const BOOL_KEYS = new Set(["hasAura", "hadPostdrome", "approximate", "startApproximate"]);
+const ARRAY_KEYS = new Set(["triggers"]);
+
+/** Wandelt einen von der Bridge stringifizierten Array-Wert in ein echtes Array.
+ *  Deckt beide Formen ab: JSON-String ('["a","b"]') und einzeln/kommagetrennt ("a,b"). */
+function toStringArray(v: string): string[] {
+  const t = v.trim();
+  if (t === "") return [];
+  if (t.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(t);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch { /* fällt unten auf Komma-Split zurück */ }
+  }
+  return t.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 function coerceArgs(args: Record<string, unknown>): void {
   for (const k of Object.keys(args)) {
     const v = args[k];
-    if (typeof v !== "string") continue; // Bridge stringify't nur — Nicht-Strings unangetastet
+    if (typeof v !== "string") continue; // Bridge stringify't nur — echte Arrays/Zahlen unangetastet
     if (NUM_KEYS.has(k)) {
       if (v === "") { delete args[k]; continue; }
       const n = Number(v);
@@ -469,6 +484,8 @@ function coerceArgs(args: Record<string, unknown>): void {
     } else if (BOOL_KEYS.has(k)) {
       if (v === "true" || v === "1") args[k] = true;
       else if (v === "false" || v === "0") args[k] = false;
+    } else if (ARRAY_KEYS.has(k)) {
+      args[k] = toStringArray(v);
     }
   }
 }
