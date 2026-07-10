@@ -502,6 +502,7 @@ async function coerceRequestBody(req: Request): Promise<Request> {
   let coerced = text;
   try {
     const msg = JSON.parse(text);
+    console.log(`[MCP-REQ] method=${msg?.method ?? "?"} id=${msg?.id ?? "-"} accept=${req.headers.get("accept") ?? "-"} session=${req.headers.get("mcp-session-id") ?? "-"}`);
     const args = msg?.params?.arguments;
     if (args && typeof args === "object" && !Array.isArray(args)) {
       coerceArgs(args as Record<string, unknown>);
@@ -547,12 +548,24 @@ function withCors(res: Response): Response {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
-export const GET = gated(async (req: Request) => withCors(await (await getAuthHandler())(req)));
-export const POST = gated(async (req: Request) => withCors(await (await getAuthHandler())(await coerceRequestBody(req))));
+/** Ruft den Handler auf und loggt die Antwort (Status, Content-Type, Session-ID, ob gestreamt).
+ *  So sehen wir, was claude.ai's Backend tatsächlich zurückbekommt. */
+async function runMcp(handlerReq: Request, httpMethod: string): Promise<Response> {
+  const t0 = Date.now();
+  const res = await (await getAuthHandler())(handlerReq);
+  console.log(
+    `[MCP-RESP] ${httpMethod} → ${res.status} ct=${res.headers.get("content-type") ?? "-"} ` +
+    `session=${res.headers.get("mcp-session-id") ?? "-"} stream=${res.body != null} (${Date.now() - t0}ms)`,
+  );
+  return withCors(res);
+}
+
+export const GET = gated(async (req: Request) => runMcp(req, "GET"));
+export const POST = gated(async (req: Request) => runMcp(await coerceRequestBody(req), "POST"));
 
 /** Streamable HTTP beendet Sessions per DELETE. Ohne Handler antwortet Next mit 405 und der
  *  Client behält eine Zombie-Session, statt sauber neu aufzubauen. */
-export const DELETE = gated(async (req: Request) => withCors(await (await getAuthHandler())(req)));
+export const DELETE = gated(async (req: Request) => runMcp(req, "DELETE"));
 
 /** Preflight — darf NICHT hinter der Bearer-Auth liegen, sonst scheitert er mit 401. */
 export async function OPTIONS(): Promise<Response> {
