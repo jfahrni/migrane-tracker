@@ -11,6 +11,10 @@ import {
   listMedications,
   setMedication,
   auditTimestamps,
+  listHistory,
+  upsertHistory,
+  deleteHistory,
+  HISTORY_CATEGORIES,
 } from "@/lib/mcp";
 import { verifyAccessToken } from "@/lib/oauth";
 import { TRIGGER_TAGS } from "@/lib/triggers";
@@ -42,7 +46,11 @@ const handler = createMcpHandler(
           "Gibt offene (nicht abgeschlossene) Attacken zurück, die noch kein endedAt haben. " +
           "Wenn openAttacks nicht leer ist, frage den Nutzer ZUERST, ob die Migräne noch andauert oder schon vorbei ist, " +
           "bevor du auf sein eigentliches Anliegen eingehst. " +
-          "Enthält ausserdem Statistiken der letzten 30 Tage und die letzten 5 abgeschlossenen Attacken.",
+          "Enthält ausserdem Statistiken der letzten 30 Tage und die letzten 5 abgeschlossenen Attacken. " +
+          "\n\n" +
+          "patientHistory enthält die Vorgeschichte (Vorbefunde, Bildgebung, relevante Ereignisse wie eine " +
+          "TGA-Episode, Komorbiditäten). LIES SIE, bevor du Attacken-Daten interpretierst — ohne diesen " +
+          "klinischen Kontext lassen sich Muster und Trends leicht fehldeuten.",
         inputSchema: {},
       },
       () => run("get_overview", buildOverview),
@@ -220,6 +228,62 @@ const handler = createMcpHandler(
         },
       },
       (args) => run("audit_timestamps", () => auditTimestamps(args)),
+    );
+
+    server.registerTool(
+      "list_history",
+      {
+        title: "Anamnese auflisten",
+        description:
+          "Listet die Vorgeschichte (Vorbefunde, Bildgebung, relevante Ereignisse, Komorbiditäten). " +
+          "Die Vorgeschichte wird auch von get_overview mitgeliefert — dieses Tool ist für gezielte Abfragen " +
+          "oder zum Filtern nach Kategorie.",
+        inputSchema: {
+          category: z.enum(HISTORY_CATEGORIES).optional().describe("Nach Kategorie filtern. Weglassen für alle."),
+        },
+      },
+      (args) => run("list_history", () => listHistory(args)),
+    );
+
+    server.registerTool(
+      "upsert_history",
+      {
+        title: "Anamnese-Eintrag anlegen/ändern",
+        description:
+          "Legt einen Eintrag zur Vorgeschichte an oder aktualisiert ihn. Ohne id wird ein neuer Eintrag " +
+          "erstellt (category + title erforderlich); mit id werden nur die angegebenen Felder geändert. " +
+          "\n\n" +
+          "Nutze dies für den klinischen Kontext, der die Attacken-Daten erst interpretierbar macht: " +
+          "Bildgebung (MRT/CT + Befund), gestellte Diagnosen, relevante Ereignisse (z.B. eine TGA-Episode), " +
+          "Komorbiditäten, frühere Medikation, Familienanamnese. " +
+          "\n\n" +
+          "WICHTIG zur Datierung: Erzwinge KEIN exaktes Datum. Ist der Zeitpunkt unscharf ('2016 oder 2017', " +
+          "'vor etwa 10 Jahren'), schreibe das wörtlich in whenText und lasse occurredAt weg. Ein hingebogenes " +
+          "Datum wäre Scheinpräzision und schlechtere Medizin. occurredAt nur bei bekanntem Datum setzen.",
+        inputSchema: {
+          id: z.string().optional().describe("ID zum Aktualisieren (weglassen für neuen Eintrag)"),
+          category: z.enum(HISTORY_CATEGORIES).optional().describe("Kategorie des Eintrags"),
+          title: z.string().optional().describe("Kurzer Titel, z.B. 'MRT Schädel' oder 'TGA-Episode'"),
+          detail: z.string().optional().describe("Freitext: Befund, Verlauf, klinischer Kontext"),
+          occurredAt: z.string().optional().describe("Datum, NUR wenn bekannt (naive Zeiten als Europe/Zurich)"),
+          whenText: z.string().optional().describe("Unscharfe Zeitangabe im Wortlaut, z.B. '2016 oder 2017'"),
+        },
+      },
+      (args) => run("upsert_history", () => upsertHistory(args)),
+    );
+
+    server.registerTool(
+      "delete_history",
+      {
+        title: "Anamnese-Eintrag löschen",
+        description:
+          "Löscht einen Eintrag der Vorgeschichte anhand seiner id. Nutze dies, um versehentlich " +
+          "angelegte oder doppelte Einträge zu entfernen. Attacken lassen sich damit NICHT löschen.",
+        inputSchema: {
+          id: z.string().describe("ID des zu löschenden Anamnese-Eintrags"),
+        },
+      },
+      (args) => run("delete_history", () => deleteHistory(args)),
     );
   },
   {},

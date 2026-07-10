@@ -150,9 +150,19 @@ export async function buildOverview() {
     ? { name: med.name, startedAt: formatDate(med.startedAt), dayNumber: dayNumber(med.startedAt, now) }
     : null;
 
+  // Vorgeschichte IMMER mitliefern: ohne sie sind die Attacken-Daten nicht
+  // interpretierbar (z.B. TGA-Episode, Vorbefunde/Bildgebung, Komorbiditäten).
+  const history = await prisma.historyEntry.findMany({
+    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+  });
+
   return {
-    schemaVersion: 2 as const,
+    schemaVersion: 3 as const,
     generatedAt: formatDateTime(now),
+    // Anamnese/Vorgeschichte: LIES DIES, bevor du die Attacken-Daten interpretierst.
+    // Sie liefert den klinischen Kontext (Vorbefunde, relevante Ereignisse,
+    // Komorbiditäten), ohne den Muster und Trends fehlgedeutet werden können.
+    patientHistory: history.map(historySummary),
     // IMPORTANT: If openAttacks is non-empty, address these FIRST in your response.
     // Ask the user if the attack is still ongoing or has ended.
     openAttacks: open.map((a) => ({
@@ -519,6 +529,88 @@ export async function setMedication(input: {
     },
   });
   return { id: created.id, message: "Medikament angelegt." };
+}
+
+// ── Anamnese / Vorgeschichte ─────────────────────────────────────────────────
+// Der Kontext, der die Attacken-Daten erst interpretierbar macht. Wird bewusst
+// auch in get_overview mitgeliefert, damit er in JEDER Unterhaltung präsent ist.
+
+export const HISTORY_CATEGORIES = [
+  "imaging",          // Bildgebung (MRT, CT)
+  "diagnosis",        // gestellte Diagnosen
+  "event",            // relevante Ereignisse (z.B. TGA-Episode)
+  "comorbidity",      // Begleiterkrankungen
+  "medication_past",  // frühere Medikation
+  "family",           // Familienanamnese
+  "other",
+] as const;
+
+function historySummary(h: {
+  id: string; category: string; title: string; detail: string | null;
+  occurredAt: Date | null; whenText: string | null;
+}) {
+  return {
+    id: h.id,
+    category: h.category,
+    title: h.title,
+    detail: h.detail,
+    // when: die menschenlesbare Angabe. whenText hat Vorrang, weil es die
+    // ehrliche Unschärfe trägt ("2016 oder 2017") statt Scheinpräzision.
+    when: h.whenText ?? formatDate(h.occurredAt),
+    occurredAt: formatDate(h.occurredAt),
+    whenText: h.whenText,
+  };
+}
+
+export async function listHistory(input: { category?: string }) {
+  const entries = await prisma.historyEntry.findMany({
+    where: input.category ? { category: input.category } : {},
+    orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
+  });
+  return entries.map(historySummary);
+}
+
+export async function upsertHistory(input: {
+  id?: string;
+  category?: string;
+  title?: string;
+  detail?: string;
+  occurredAt?: string;
+  whenText?: string;
+}) {
+  if (input.id) {
+    const data: Record<string, unknown> = {};
+    if (input.category !== undefined) data.category = input.category;
+    if (input.title !== undefined) data.title = input.title;
+    if (input.detail !== undefined) data.detail = input.detail;
+    if (input.occurredAt !== undefined) data.occurredAt = parseLocalToInstant(input.occurredAt);
+    if (input.whenText !== undefined) data.whenText = input.whenText;
+    const updated = await prisma.historyEntry.update({ where: { id: input.id }, data });
+    return { ...historySummary(updated), message: "Anamnese-Eintrag aktualisiert." };
+  }
+
+  if (!input.category || !input.title) {
+    return { error: "category und title sind für einen neuen Eintrag erforderlich." };
+  }
+  const created = await prisma.historyEntry.create({
+    data: {
+      category: input.category,
+      title: input.title,
+      detail: input.detail ?? null,
+      occurredAt: input.occurredAt ? parseLocalToInstant(input.occurredAt) : null,
+      whenText: input.whenText ?? null,
+    },
+  });
+  return { ...historySummary(created), message: "Anamnese-Eintrag angelegt." };
+}
+
+export async function deleteHistory(input: { id: string }) {
+  try {
+    await prisma.historyEntry.delete({ where: { id: input.id } });
+    return { id: input.id, message: "Anamnese-Eintrag gelöscht." };
+  } catch {
+    return { error: `Kein Anamnese-Eintrag mit id ${input.id} gefunden.` };
+  }
 }
 
 // ── audit_timestamps ─────────────────────────────────────────────────────────

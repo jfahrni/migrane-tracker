@@ -30,6 +30,23 @@ model Attack {
   @@index([episodeGroupId])
 }
 
+// Freie Anamnese / Vorgeschichte — der Kontext, der die Attacken-Daten erst
+// interpretierbar macht (Vorbefunde, Bildgebung, relevante Ereignisse wie TGA,
+// Komorbiditäten). Wird in get_overview mitgeliefert, damit der Kontext in JEDER
+// Unterhaltung präsent ist und nicht nur auf explizite Nachfrage.
+model HistoryEntry {
+  id         String    @id @default(cuid())
+  category   String    // imaging | diagnosis | event | comorbidity | medication_past | family | other
+  title      String    // kurz, z.B. "MRT Schädel", "TGA-Episode"
+  detail     String?   // Freitext: Befund, Verlauf, Kontext
+  occurredAt DateTime? // nullable — unscharfe Daten werden NICHT erzwungen
+  whenText   String?   // ehrliche Unschärfe, z.B. "2016 oder 2017" (statt Scheinpräzision)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([occurredAt(sort: Desc)])
+}
+
 // Medikamenten-Phasen — löst das lose CANDESARTAN_START_DATE aus der Env ab.
 // Erlaubt "Tag N"-Berechnung und mehrere Präparate über die Zeit.
 model Medication {
