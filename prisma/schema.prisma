@@ -34,17 +34,29 @@ model Attack {
 // interpretierbar macht (Vorbefunde, Bildgebung, relevante Ereignisse wie TGA,
 // Komorbiditäten). Wird in get_overview mitgeliefert, damit der Kontext in JEDER
 // Unterhaltung präsent ist und nicht nur auf explizite Nachfrage.
+// Getrennte Typen statt einer Freitext-Note: der Typ entscheidet, ob ein Eintrag
+// beim Auswerten überhaupt gelesen/gewichtet wird.
 model HistoryEntry {
-  id         String    @id @default(cuid())
-  category   String    // imaging | diagnosis | event | comorbidity | medication_past | family | other
-  title      String    // kurz, z.B. "MRT Schädel", "TGA-Episode"
-  detail     String?   // Freitext: Befund, Verlauf, Kontext
-  occurredAt DateTime? // nullable — unscharfe Daten werden NICHT erzwungen
-  whenText   String?   // ehrliche Unschärfe, z.B. "2016 oder 2017" (statt Scheinpräzision)
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id          String    @id @default(cuid())
+  type        String    // ONSET | PRIOR_PATTERN | IMAGING | DIAGNOSIS | COMORBID_EVENT | MEDICATION_PAST | FAMILY | CARE_CONTEXT | OTHER
+  title       String    // kurz, z.B. "MRT Schädel", "TGA-Episode"
+  detail      String?   // Befund, Verlauf, klinischer Kontext
+  occurredAt  DateTime? // nullable — Zeitpunkt wird nicht erzwungen
+  precision   String?   // YEAR | MONTH | DAY — verhindert, dass ein Näherungswert später wie ein Fakt aussieht
+  approximate Boolean   @default(false) // true = Datum ist geschätzt, nicht belegt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([occurredAt(sort: Desc)])
+  @@index([type])
+}
+
+// Key/Value für dauerhafte Einstellungen. Trägt u.a. die "standingInstructions",
+// die bei JEDEM get_overview zuoberst ausgeliefert werden (Pflichtfeld statt Selbstdisziplin).
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 // Medikamenten-Phasen — löst das lose CANDESARTAN_START_DATE aus der Env ab.
@@ -53,6 +65,9 @@ model Medication {
   id        String    @id @default(cuid())
   name      String
   startedAt DateTime
+  // Ohne diese beiden sieht ein hingeschriebenes 01.01.2020 in sechs Monaten wie ein Fakt aus.
+  startPrecision   String?  // YEAR | MONTH | DAY
+  startApproximate Boolean  @default(false)
   endedAt   DateTime?
   notes     String?
   createdAt DateTime  @default(now())

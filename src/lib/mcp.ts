@@ -13,6 +13,27 @@ function formatDate(d: Date | null | undefined): string | null {
   return d.toLocaleDateString("de-CH", { timeZone: APP_TZ });
 }
 
+// ── Unschärfe-tolerante Datumsausgabe ────────────────────────────────────────
+// Der Kern: die AUSGABE trägt die Unschärfe. Ein "01.01.2020" ohne Kennzeichnung
+// liest sich in sechs Monaten wie ein Fakt — "ca. 2020" nicht.
+export const DATE_PRECISIONS = ["YEAR", "MONTH", "DAY"] as const;
+
+function formatFuzzyDate(
+  d: Date | null | undefined,
+  precision: string | null | undefined,
+  approximate: boolean,
+): string | null {
+  if (!d) return null;
+  const prefix = approximate ? "ca. " : "";
+  if (precision === "YEAR") {
+    return prefix + d.toLocaleDateString("de-CH", { timeZone: APP_TZ, year: "numeric" });
+  }
+  if (precision === "MONTH") {
+    return prefix + d.toLocaleDateString("de-CH", { timeZone: APP_TZ, month: "2-digit", year: "numeric" });
+  }
+  return prefix + d.toLocaleDateString("de-CH", { timeZone: APP_TZ });
+}
+
 function durationHours(start: Date, end: Date): number {
   return Math.round(((end.getTime() - start.getTime()) / 3_600_000) * 10) / 10;
 }
@@ -147,7 +168,14 @@ export async function buildOverview() {
 
   const med = await getPrimaryMedication();
   const medication = med
-    ? { name: med.name, startedAt: formatDate(med.startedAt), dayNumber: dayNumber(med.startedAt, now) }
+    ? {
+        name: med.name,
+        // Fuzzy: "ca. 2020" statt eines Datums, das wie ein Fakt aussieht.
+        startedAt: formatFuzzyDate(med.startedAt, med.startPrecision, med.startApproximate),
+        startApproximate: med.startApproximate,
+        // dayNumber ist bei geschätztem Start ebenfalls eine Näherung → dann nicht ausgeben.
+        dayNumber: med.startApproximate ? null : dayNumber(med.startedAt, now),
+      }
     : null;
 
   // Vorgeschichte IMMER mitliefern: ohne sie sind die Attacken-Daten nicht
@@ -156,12 +184,15 @@ export async function buildOverview() {
     orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
   });
 
+  const clinicalBriefing = await buildClinicalBriefing(recent.length);
+
   return {
-    schemaVersion: 3 as const,
+    // ZUERST: nennt die Grenzen der Daten, bevor sie jemand interpretiert.
+    // Pflichtfeld — verlasse dich nicht darauf, dass die Vorgeschichte gelesen wird.
+    clinicalBriefing,
+    schemaVersion: 4 as const,
     generatedAt: formatDateTime(now),
     // Anamnese/Vorgeschichte: LIES DIES, bevor du die Attacken-Daten interpretierst.
-    // Sie liefert den klinischen Kontext (Vorbefunde, relevante Ereignisse,
-    // Komorbiditäten), ohne den Muster und Trends fehlgedeutet werden können.
     patientHistory: history.map(historySummary),
     // IMPORTANT: If openAttacks is non-empty, address these FIRST in your response.
     // Ask the user if the attack is still ongoing or has ended.
@@ -494,9 +525,12 @@ export async function listMedications() {
   return meds.map((m) => ({
     id: m.id,
     name: m.name,
-    startedAt: formatDate(m.startedAt),
+    startedAt: formatFuzzyDate(m.startedAt, m.startPrecision, m.startApproximate),
+    startPrecision: m.startPrecision,
+    startApproximate: m.startApproximate,
     endedAt: formatDate(m.endedAt),
-    dayNumber: m.endedAt ? null : dayNumber(m.startedAt, now),
+    // Bei geschätztem Start wäre "Tag N" Scheinpräzision.
+    dayNumber: m.endedAt || m.startApproximate ? null : dayNumber(m.startedAt, now),
     notes: m.notes,
   }));
 }
@@ -505,6 +539,8 @@ export async function setMedication(input: {
   id?: string;
   name?: string;
   startedAt?: string;
+  startPrecision?: string;
+  startApproximate?: boolean;
   endedAt?: string;
   notes?: string;
 }) {
@@ -512,6 +548,8 @@ export async function setMedication(input: {
     const data: Record<string, unknown> = {};
     if (input.name !== undefined) data.name = input.name;
     if (input.startedAt !== undefined) data.startedAt = parseLocalToInstant(input.startedAt);
+    if (input.startPrecision !== undefined) data.startPrecision = input.startPrecision;
+    if (input.startApproximate !== undefined) data.startApproximate = input.startApproximate;
     if (input.endedAt !== undefined) data.endedAt = parseLocalToInstant(input.endedAt);
     if (input.notes !== undefined) data.notes = input.notes;
     const updated = await prisma.medication.update({ where: { id: input.id }, data });
@@ -524,6 +562,8 @@ export async function setMedication(input: {
     data: {
       name: input.name,
       startedAt: parseLocalToInstant(input.startedAt),
+      startPrecision: input.startPrecision ?? null,
+      startApproximate: input.startApproximate ?? false,
       endedAt: input.endedAt ? parseLocalToInstant(input.endedAt) : null,
       notes: input.notes ?? null,
     },
@@ -535,36 +575,40 @@ export async function setMedication(input: {
 // Der Kontext, der die Attacken-Daten erst interpretierbar macht. Wird bewusst
 // auch in get_overview mitgeliefert, damit er in JEDER Unterhaltung präsent ist.
 
-export const HISTORY_CATEGORIES = [
-  "imaging",          // Bildgebung (MRT, CT)
-  "diagnosis",        // gestellte Diagnosen
-  "event",            // relevante Ereignisse (z.B. TGA-Episode)
-  "comorbidity",      // Begleiterkrankungen
-  "medication_past",  // frühere Medikation
-  "family",           // Familienanamnese
-  "other",
+// Getrennte Typen statt einer Freitext-Note: der Typ entscheidet, ob ein Eintrag
+// beim Auswerten gelesen und gewichtet wird.
+export const HISTORY_TYPES = [
+  "ONSET",           // wann/wie die Migräne begann
+  "PRIOR_PATTERN",   // wie sie früher verlief
+  "IMAGING",         // Bildgebung + Befund
+  "DIAGNOSIS",       // gestellte Diagnosen
+  "COMORBID_EVENT",  // relevante Ereignisse/Komorbiditäten (z.B. TGA)
+  "MEDICATION_PAST", // frühere Medikation
+  "FAMILY",          // Familienanamnese
+  "CARE_CONTEXT",    // Behandlungskontext (wer behandelt, nächster Termin)
+  "OTHER",
 ] as const;
 
 function historySummary(h: {
-  id: string; category: string; title: string; detail: string | null;
-  occurredAt: Date | null; whenText: string | null;
+  id: string; type: string; title: string; detail: string | null;
+  occurredAt: Date | null; precision: string | null; approximate: boolean;
 }) {
   return {
     id: h.id,
-    category: h.category,
+    type: h.type,
     title: h.title,
     detail: h.detail,
-    // when: die menschenlesbare Angabe. whenText hat Vorrang, weil es die
-    // ehrliche Unschärfe trägt ("2016 oder 2017") statt Scheinpräzision.
-    when: h.whenText ?? formatDate(h.occurredAt),
-    occurredAt: formatDate(h.occurredAt),
-    whenText: h.whenText,
+    // when trägt die Unschärfe im Text ("ca. 2016") — kann nie zum Fakt verhärten.
+    when: formatFuzzyDate(h.occurredAt, h.precision, h.approximate),
+    occurredAt: h.occurredAt ? h.occurredAt.toISOString() : null,
+    precision: h.precision,
+    approximate: h.approximate,
   };
 }
 
-export async function listHistory(input: { category?: string }) {
+export async function listHistory(input: { type?: string }) {
   const entries = await prisma.historyEntry.findMany({
-    where: input.category ? { category: input.category } : {},
+    where: input.type ? { type: input.type } : {},
     orderBy: [{ occurredAt: "desc" }, { createdAt: "desc" }],
   });
   return entries.map(historySummary);
@@ -572,36 +616,94 @@ export async function listHistory(input: { category?: string }) {
 
 export async function upsertHistory(input: {
   id?: string;
-  category?: string;
+  type?: string;
   title?: string;
   detail?: string;
   occurredAt?: string;
-  whenText?: string;
+  precision?: string;
+  approximate?: boolean;
 }) {
   if (input.id) {
     const data: Record<string, unknown> = {};
-    if (input.category !== undefined) data.category = input.category;
+    if (input.type !== undefined) data.type = input.type;
     if (input.title !== undefined) data.title = input.title;
     if (input.detail !== undefined) data.detail = input.detail;
     if (input.occurredAt !== undefined) data.occurredAt = parseLocalToInstant(input.occurredAt);
-    if (input.whenText !== undefined) data.whenText = input.whenText;
+    if (input.precision !== undefined) data.precision = input.precision;
+    if (input.approximate !== undefined) data.approximate = input.approximate;
     const updated = await prisma.historyEntry.update({ where: { id: input.id }, data });
     return { ...historySummary(updated), message: "Anamnese-Eintrag aktualisiert." };
   }
 
-  if (!input.category || !input.title) {
-    return { error: "category und title sind für einen neuen Eintrag erforderlich." };
+  if (!input.type || !input.title) {
+    return { error: "type und title sind für einen neuen Eintrag erforderlich." };
   }
   const created = await prisma.historyEntry.create({
     data: {
-      category: input.category,
+      type: input.type,
       title: input.title,
       detail: input.detail ?? null,
       occurredAt: input.occurredAt ? parseLocalToInstant(input.occurredAt) : null,
-      whenText: input.whenText ?? null,
+      precision: input.precision ?? null,
+      approximate: input.approximate ?? false,
     },
   });
   return { ...historySummary(created), message: "Anamnese-Eintrag angelegt." };
+}
+
+// ── Pflicht-Briefing ─────────────────────────────────────────────────────────
+// Selbstdisziplin skaliert nicht über Sessions hinweg, ein Pflichtfeld schon.
+// clinicalBriefing steht als ERSTES Feld in get_overview und nennt die Grenzen
+// der Daten, bevor irgendjemand sie interpretiert.
+
+const BRIEFING_KEY = "standingInstructions";
+const OVERVIEW_WINDOW_DAYS = 30;
+
+export async function getStandingInstructions(): Promise<string | null> {
+  const row = await prisma.appSetting.findUnique({ where: { key: BRIEFING_KEY } });
+  return row?.value ?? null;
+}
+
+export async function setStandingInstructions(input: { text: string }) {
+  const value = input.text.trim();
+  await prisma.appSetting.upsert({
+    where: { key: BRIEFING_KEY },
+    create: { key: BRIEFING_KEY, value },
+    update: { value },
+  });
+  return { message: "Dauerhafte Anweisungen gespeichert.", standingInstructions: value };
+}
+
+/** Baut das Briefing: berechnete Datengrenzen + die dauerhaften Anweisungen des Nutzers. */
+async function buildClinicalBriefing(attacksInWindow: number) {
+  const [standing, oldest, imaging] = await Promise.all([
+    getStandingInstructions(),
+    prisma.historyEntry.findFirst({
+      where: { occurredAt: { not: null } },
+      orderBy: { occurredAt: "asc" },
+    }),
+    prisma.historyEntry.findMany({ where: { type: "IMAGING" } }),
+  ]);
+
+  const facts: string[] = [
+    `Dieses Datenfenster umfasst ${OVERVIEW_WINDOW_DAYS} Tage (${attacksInWindow} Attacken).`,
+  ];
+  if (oldest?.occurredAt) {
+    facts.push(`Die Krankengeschichte reicht zurück bis ${oldest.occurredAt.getFullYear()}.`);
+  } else {
+    facts.push("Es ist KEINE Vorgeschichte erfasst — die Daten sind ohne diesen Kontext nur eingeschränkt interpretierbar.");
+  }
+  if (imaging.length > 0) {
+    facts.push(`${imaging.length} Bildgebung(en) erfasst — siehe patientHistory (type=IMAGING).`);
+  }
+  facts.push("Datumsangaben mit 'ca.' sind Näherungen, keine belegten Daten.");
+
+  return {
+    readFirst: [...facts, ...(standing ? [standing] : [])].join(" "),
+    dataWindowDays: OVERVIEW_WINDOW_DAYS,
+    historyReachesBackTo: oldest?.occurredAt ? oldest.occurredAt.getFullYear() : null,
+    standingInstructions: standing,
+  };
 }
 
 export async function deleteHistory(input: { id: string }) {

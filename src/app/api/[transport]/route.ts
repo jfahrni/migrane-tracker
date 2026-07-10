@@ -14,7 +14,9 @@ import {
   listHistory,
   upsertHistory,
   deleteHistory,
-  HISTORY_CATEGORIES,
+  setStandingInstructions,
+  HISTORY_TYPES,
+  DATE_PRECISIONS,
 } from "@/lib/mcp";
 import { verifyAccessToken } from "@/lib/oauth";
 import { TRIGGER_TAGS } from "@/lib/triggers";
@@ -202,11 +204,17 @@ const handler = createMcpHandler(
         title: "Medikament anlegen/ändern",
         description:
           "Legt eine Medikamenten-Phase an oder aktualisiert sie. Ohne id wird ein neuer Eintrag erstellt (name + startedAt erforderlich). " +
-          "Mit id werden nur die angegebenen Felder geändert. endedAt setzen, wenn ein Präparat abgesetzt wird.",
+          "Mit id werden nur die angegebenen Felder geändert. endedAt setzen, wenn ein Präparat abgesetzt wird. " +
+          "\n\n" +
+          "DATIERUNG: Ist das Startdatum nur ungefähr bekannt (z.B. 'seit etwa 2020'), setze startPrecision=YEAR " +
+          "und startApproximate=true. Die Ausgabe wird dann als 'ca. 2020' gekennzeichnet und 'Tag N' wird " +
+          "unterdrückt. Ohne das sieht ein hingeschriebenes 01.01.2020 später wie ein belegter Fakt aus.",
         inputSchema: {
           id: z.string().optional().describe("ID zum Aktualisieren (weglassen für neuen Eintrag)"),
           name: z.string().optional().describe("Präparatname, z.B. 'Candesartan'"),
           startedAt: z.string().optional().describe("Startdatum (naive Zeiten als Europe/Zurich)"),
+          startPrecision: z.enum(DATE_PRECISIONS).optional().describe("Genauigkeit des Startdatums: YEAR | MONTH | DAY"),
+          startApproximate: z.boolean().optional().describe("true = Startdatum ist geschätzt (Ausgabe als 'ca. …', kein dayNumber)"),
           endedAt: z.string().optional().describe("Absetzdatum (optional)"),
           notes: z.string().optional(),
         },
@@ -235,11 +243,10 @@ const handler = createMcpHandler(
       {
         title: "Anamnese auflisten",
         description:
-          "Listet die Vorgeschichte (Vorbefunde, Bildgebung, relevante Ereignisse, Komorbiditäten). " +
-          "Die Vorgeschichte wird auch von get_overview mitgeliefert — dieses Tool ist für gezielte Abfragen " +
-          "oder zum Filtern nach Kategorie.",
+          "Listet die Vorgeschichte. Wird auch von get_overview mitgeliefert — dieses Tool ist für " +
+          "gezielte Abfragen oder zum Filtern nach Typ.",
         inputSchema: {
-          category: z.enum(HISTORY_CATEGORIES).optional().describe("Nach Kategorie filtern. Weglassen für alle."),
+          type: z.enum(HISTORY_TYPES).optional().describe("Nach Typ filtern. Weglassen für alle."),
         },
       },
       (args) => run("list_history", () => listHistory(args)),
@@ -251,25 +258,54 @@ const handler = createMcpHandler(
         title: "Anamnese-Eintrag anlegen/ändern",
         description:
           "Legt einen Eintrag zur Vorgeschichte an oder aktualisiert ihn. Ohne id wird ein neuer Eintrag " +
-          "erstellt (category + title erforderlich); mit id werden nur die angegebenen Felder geändert. " +
+          "erstellt (type + title erforderlich); mit id werden nur die angegebenen Felder geändert. " +
           "\n\n" +
-          "Nutze dies für den klinischen Kontext, der die Attacken-Daten erst interpretierbar macht: " +
-          "Bildgebung (MRT/CT + Befund), gestellte Diagnosen, relevante Ereignisse (z.B. eine TGA-Episode), " +
-          "Komorbiditäten, frühere Medikation, Familienanamnese. " +
-          "\n\n" +
-          "WICHTIG zur Datierung: Erzwinge KEIN exaktes Datum. Ist der Zeitpunkt unscharf ('2016 oder 2017', " +
-          "'vor etwa 10 Jahren'), schreibe das wörtlich in whenText und lasse occurredAt weg. Ein hingebogenes " +
-          "Datum wäre Scheinpräzision und schlechtere Medizin. occurredAt nur bei bekanntem Datum setzen.",
+          "TYPEN — wähle den passenden, denn der Typ entscheidet, ob und wie ein Eintrag ausgewertet wird:\n" +
+          "- ONSET: wann/wie die Migräne überhaupt begann\n" +
+          "- PRIOR_PATTERN: wie sie früher verlief (Frequenz, Charakter vor der jetzigen Phase)\n" +
+          "- IMAGING: Bildgebung inkl. Befund (MRT, CT)\n" +
+          "- DIAGNOSIS: gestellte Diagnosen\n" +
+          "- COMORBID_EVENT: relevante Ereignisse/Begleiterkrankungen (z.B. eine TGA-Episode)\n" +
+          "- MEDICATION_PAST: frühere Medikation\n" +
+          "- FAMILY: Familienanamnese\n" +
+          "- CARE_CONTEXT: Behandlungskontext (wer behandelt, nächster Termin)\n" +
+          "- OTHER: alles andere\n" +
+          "\n" +
+          "DATIERUNG — erzwinge KEIN exaktes Datum. Nutze occurredAt zusammen mit precision und approximate:\n" +
+          "- Genau bekannter Tag → occurredAt + precision=DAY, approximate=false\n" +
+          "- Nur Monat bekannt → occurredAt (1. des Monats) + precision=MONTH\n" +
+          "- Nur Jahr bekannt → occurredAt (1. Januar) + precision=YEAR\n" +
+          "- Geschätzt/unsicher → zusätzlich approximate=true (Ausgabe wird dann als 'ca. …' gekennzeichnet)\n" +
+          "- Zeitpunkt völlig unbekannt → occurredAt weglassen\n" +
+          "Ohne precision/approximate sieht eine Näherung später wie ein belegter Fakt aus. Das wäre " +
+          "Scheinpräzision und schlechtere Medizin.",
         inputSchema: {
           id: z.string().optional().describe("ID zum Aktualisieren (weglassen für neuen Eintrag)"),
-          category: z.enum(HISTORY_CATEGORIES).optional().describe("Kategorie des Eintrags"),
+          type: z.enum(HISTORY_TYPES).optional().describe("Typ des Eintrags (siehe Beschreibung)"),
           title: z.string().optional().describe("Kurzer Titel, z.B. 'MRT Schädel' oder 'TGA-Episode'"),
-          detail: z.string().optional().describe("Freitext: Befund, Verlauf, klinischer Kontext"),
-          occurredAt: z.string().optional().describe("Datum, NUR wenn bekannt (naive Zeiten als Europe/Zurich)"),
-          whenText: z.string().optional().describe("Unscharfe Zeitangabe im Wortlaut, z.B. '2016 oder 2017'"),
+          detail: z.string().optional().describe("Befund, Verlauf, klinischer Kontext"),
+          occurredAt: z.string().optional().describe("Datum, nur wenn bekannt (naive Zeiten als Europe/Zurich)"),
+          precision: z.enum(DATE_PRECISIONS).optional().describe("Genauigkeit von occurredAt: YEAR | MONTH | DAY"),
+          approximate: z.boolean().optional().describe("true = Datum ist geschätzt, nicht belegt (Ausgabe als 'ca. …')"),
         },
       },
       (args) => run("upsert_history", () => upsertHistory(args)),
+    );
+
+    server.registerTool(
+      "set_standing_instructions",
+      {
+        title: "Dauerhafte Anweisungen setzen",
+        description:
+          "Setzt dauerhafte Anweisungen, die bei JEDEM get_overview ganz oben in clinicalBriefing.readFirst " +
+          "ausgeliefert werden — sitzungsübergreifend und verbindlich. " +
+          "Nutze dies für Regeln, die immer gelten sollen, z.B. 'Vor Abklärungsempfehlungen nachfragen' oder " +
+          "'Hausarzt kennt die Vorgeschichte, Termin Anfang August'. Der Text ersetzt die bisherigen Anweisungen.",
+        inputSchema: {
+          text: z.string().describe("Der vollständige Anweisungstext (ersetzt den bisherigen)"),
+        },
+      },
+      (args) => run("set_standing_instructions", () => setStandingInstructions(args)),
     );
 
     server.registerTool(
@@ -286,7 +322,21 @@ const handler = createMcpHandler(
       (args) => run("delete_history", () => deleteHistory(args)),
     );
   },
-  {},
+  {
+    // Protokoll-seitige Server-Instructions (beim initialize ausgeliefert).
+    // Sie zeigen bewusst auf clinicalBriefing, weil dieser Text hier beim Start
+    // memoisiert wird — der jeweils frische Stand steht in get_overview.
+    instructions:
+      "Migräne-Tracker. Erfasst Attacken, Medikamentenphasen und die Krankengeschichte.\n\n" +
+      "VERBINDLICH: Rufe get_overview am Anfang JEDER Unterhaltung auf und lies das Feld " +
+      "clinicalBriefing.readFirst ZUERST — es steht ganz oben in der Antwort. Es nennt die Grenzen " +
+      "der Daten (Fenstergröße, Reichweite der Krankengeschichte) sowie die dauerhaften Anweisungen " +
+      "des Nutzers. Interpretiere KEINE Attacken-Daten, bevor du es gelesen hast.\n\n" +
+      "Datumsangaben mit vorangestelltem 'ca.' sind Näherungen, keine belegten Daten — behandle sie " +
+      "niemals als Fakten und leite daraus keine exakten Zeiträume oder Tageszählungen ab.\n\n" +
+      "Das Datenfenster von get_overview ist kurz (30 Tage); die Krankengeschichte in patientHistory " +
+      "reicht deutlich weiter zurück. Ein Trend im Fenster ist kein Trend der Erkrankung.",
+  },
   { basePath: "/api", maxDuration: 60 },
 );
 
@@ -327,7 +377,7 @@ const authHandler = withMcpAuth(handler, verifyToken, { required: true });
 // zod-to-json-schema-Konverter aus → Stack Overflow), coercen wir hier den
 // JSON-RPC-Body VOR der SDK-Validierung. Das Schema bleibt strikt und sicher.
 const NUM_KEYS = new Set(["intensity", "auraSeverity", "limit", "months"]);
-const BOOL_KEYS = new Set(["hasAura", "hadPostdrome"]);
+const BOOL_KEYS = new Set(["hasAura", "hadPostdrome", "approximate", "startApproximate"]);
 
 function coerceArgs(args: Record<string, unknown>): void {
   for (const k of Object.keys(args)) {
