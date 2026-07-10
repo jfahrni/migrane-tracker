@@ -402,7 +402,15 @@ const verifyToken = async (_req: Request, token?: string) => {
     return undefined;
   }
 
-  const oauthRecord = await verifyAccessToken(token);
+  // DB-Fehler (z.B. kurzer SQLite-Lock, connection_limit=1) dürfen NICHT durchschlagen:
+  // eine geworfene Exception liefert dem Client eine leere Antwort statt eines sauberen
+  // 401 — der Client hält den Server dann für kaputt. Statisches Token bleibt als Fallback.
+  let oauthRecord: Awaited<ReturnType<typeof verifyAccessToken>> = null;
+  try {
+    oauthRecord = await verifyAccessToken(token);
+  } catch (e) {
+    console.error("[mcp/auth] OAuth-Token-Prüfung fehlgeschlagen (DB?):", (e as Error).message);
+  }
   if (oauthRecord) {
     console.log("[mcp/auth] OAuth token OK, clientId:", oauthRecord.clientId);
     return { token, scopes: oauthRecord.scopes.split(" "), clientId: oauthRecord.clientId };
@@ -425,10 +433,20 @@ async function buildAuthHandler(): Promise<(req: Request) => Promise<Response>> 
 }
 
 /** Memoisiert: einmal beim ersten Request gebaut. Die Instructions (inkl. eingebettetem Abbild der
- *  dauerhaften Anweisungen) entsprechen dem Stand beim Server-Start; Refresh bei Deploy/Neustart. */
+ *  dauerhaften Anweisungen) entsprechen dem Stand beim Server-Start; Refresh bei Deploy/Neustart.
+ *
+ *  WICHTIG: Bei einem Fehler wird die Memoisierung zurückgesetzt. Sonst bliebe eine einmal
+ *  abgelehnte Promise für immer gecacht und JEDER weitere Request schlüge fehl — der Endpoint
+ *  wäre bis zum nächsten Neustart tot, ohne dass sich am Code etwas geändert hätte. */
 let authHandlerPromise: Promise<(req: Request) => Promise<Response>> | null = null;
 function getAuthHandler(): Promise<(req: Request) => Promise<Response>> {
-  return (authHandlerPromise ??= buildAuthHandler());
+  if (!authHandlerPromise) {
+    authHandlerPromise = buildAuthHandler().catch((e) => {
+      authHandlerPromise = null; // nächster Request baut neu auf
+      throw e;
+    });
+  }
+  return authHandlerPromise;
 }
 
 // ── String→Zahl/Bool-Coercion an der Transport-Grenze ────────────────────────
@@ -493,5 +511,23 @@ function gated(h: (req: Request) => Promise<Response>) {
   };
 }
 
+// CORS-Preflight für Browser-basierte MCP-Clients (claude.ai).
+const MCP_CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version",
+  "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
+};
+
 export const GET = gated(async (req: Request) => (await getAuthHandler())(req));
 export const POST = gated(async (req: Request) => (await getAuthHandler())(await coerceRequestBody(req)));
+
+/** Streamable HTTP beendet Sessions per DELETE. Ohne Handler antwortet Next mit 405 und der
+ *  Client behält eine Zombie-Session, statt sauber neu aufzubauen. */
+export const DELETE = gated(async (req: Request) => (await getAuthHandler())(req));
+
+/** Preflight — darf NICHT hinter der Bearer-Auth liegen, sonst scheitert er mit 401. */
+export async function OPTIONS(): Promise<Response> {
+  if (process.env.ENABLE_MCP !== "true") return new Response("Not Found", { status: 404 });
+  return new Response(null, { status: 204, headers: MCP_CORS });
+}

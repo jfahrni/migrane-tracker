@@ -9,12 +9,28 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+    # Container gilt erst als gesund, wenn die DB antwortet (Migrationen durch).
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.migrane-tracker.rule=Host(`migraene.fahrni.ch`)"
       - "traefik.http.routers.migrane-tracker.entrypoints=websecure"
       - "traefik.http.routers.migrane-tracker.tls.certresolver=letsencrypt"
       - "traefik.http.services.migrane-tracker.loadbalancer.server.port=3000"
+      # Traefik prüft selbst und nimmt den Container beim Neustart aus dem Routing,
+      # statt Requests in einen noch bootenden Prozess zu schicken.
+      - "traefik.http.services.migrane-tracker.loadbalancer.healthcheck.path=/api/health"
+      - "traefik.http.services.migrane-tracker.loadbalancer.healthcheck.interval=10s"
+      - "traefik.http.services.migrane-tracker.loadbalancer.healthcheck.timeout=3s"
     networks:
       - traefik
 

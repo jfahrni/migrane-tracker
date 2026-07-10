@@ -93,7 +93,9 @@ jobs:
 
             echo "→ Container neu starten..."
             cd "$DIR"
-            docker compose up -d --force-recreate
+            # --wait: blockiert, bis der Healthcheck grün ist. Schlägt der Start fehl,
+            # scheitert der Deploy sichtbar, statt einen kaputten Container laufen zu lassen.
+            docker compose up -d --force-recreate --wait --wait-timeout 120
 
             docker image prune -f
             echo "✓ migrane-tracker deployed."

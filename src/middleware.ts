@@ -10,6 +10,7 @@ import { verifySession, SESSION_COOKIE } from "@/lib/session";
 function isPublic(pathname: string): boolean {
   return (
     pathname === "/login" ||
+    pathname === "/api/health" || // Docker/Traefik-Healthcheck, keine Session
     pathname.startsWith("/api/auth/") ||
     pathname.startsWith("/api/mcp") ||
     pathname.startsWith("/api/oauth/") ||
