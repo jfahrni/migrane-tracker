@@ -511,20 +511,31 @@ function gated(h: (req: Request) => Promise<Response>) {
   };
 }
 
-// CORS-Preflight für Browser-basierte MCP-Clients (claude.ai).
-const MCP_CORS = {
+// CORS für Browser-basierte MCP-Clients (claude.ai Web + Desktop-App, die die
+// Web-Schicht einbettet). Ohne diese Header auf der ECHTEN Antwort (nicht nur im
+// Preflight) verwirft der Browser die Response — die native Mobile-App ist davon
+// nicht betroffen. Deshalb: Mobile geht, Web/Desktop nicht.
+const MCP_CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Authorization, Content-Type, Mcp-Session-Id, MCP-Protocol-Version",
   "Access-Control-Expose-Headers": "Mcp-Session-Id, WWW-Authenticate",
 };
 
-export const GET = gated(async (req: Request) => (await getAuthHandler())(req));
-export const POST = gated(async (req: Request) => (await getAuthHandler())(await coerceRequestBody(req)));
+/** Injiziert die CORS-Header in die (ggf. gestreamte) Antwort des Handlers.
+ *  new Response(res.body, …) erhält den ReadableStream, sodass SSE weiter fliesst. */
+function withCors(res: Response): Response {
+  const headers = new Headers(res.headers);
+  for (const [k, v] of Object.entries(MCP_CORS)) headers.set(k, v);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
+export const GET = gated(async (req: Request) => withCors(await (await getAuthHandler())(req)));
+export const POST = gated(async (req: Request) => withCors(await (await getAuthHandler())(await coerceRequestBody(req))));
 
 /** Streamable HTTP beendet Sessions per DELETE. Ohne Handler antwortet Next mit 405 und der
  *  Client behält eine Zombie-Session, statt sauber neu aufzubauen. */
-export const DELETE = gated(async (req: Request) => (await getAuthHandler())(req));
+export const DELETE = gated(async (req: Request) => withCors(await (await getAuthHandler())(req)));
 
 /** Preflight — darf NICHT hinter der Bearer-Auth liegen, sonst scheitert er mit 401. */
 export async function OPTIONS(): Promise<Response> {

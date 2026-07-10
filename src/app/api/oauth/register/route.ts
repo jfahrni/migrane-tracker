@@ -2,14 +2,28 @@ import { NextRequest, NextResponse } from "next/server";
 import { registerClient, OAUTH_SUPPORTED_SCOPES } from "@/lib/oauth";
 import { checkRateLimit } from "@/lib/rate-limit";
 
+// Dynamic Client Registration wird von Browser-Clients cross-origin aufgerufen.
+const CORS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+};
+function corsJson(body: unknown, init?: { status?: number }): NextResponse {
+  return NextResponse.json(body, { status: init?.status ?? 200, headers: CORS });
+}
+
+export function OPTIONS(): NextResponse {
+  return new NextResponse(null, { status: 204, headers: CORS });
+}
+
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() ?? "unknown";
   const rl = await checkRateLimit(`oauth-register:${ip}`, 20, 60_000);
-  if (rl.limited) return NextResponse.json({ error: "too_many_requests" }, { status: 429 });
+  if (rl.limited) return corsJson({ error: "too_many_requests" }, { status: 429 });
 
   let body: Record<string, unknown>;
   try { body = await req.json(); }
-  catch { return NextResponse.json({ error: "invalid_request" }, { status: 400 }); }
+  catch { return corsJson({ error: "invalid_request" }, { status: 400 }); }
 
   const clientName = typeof body.client_name === "string" && body.client_name.trim()
     ? body.client_name.trim() : "Unknown Client";
@@ -27,11 +41,11 @@ export async function POST(req: NextRequest) {
   }
 
   if (redirectUris.length === 0) {
-    return NextResponse.json({ error: "invalid_redirect_uri" }, { status: 400 });
+    return corsJson({ error: "invalid_redirect_uri" }, { status: 400 });
   }
 
   const client = await registerClient({ clientName, redirectUris });
-  return NextResponse.json({
+  return corsJson({
     client_id: client.clientId,
     client_name: client.clientName,
     redirect_uris: redirectUris,
