@@ -428,7 +428,15 @@ const verifyToken = async (_req: Request, token?: string) => {
 
 async function buildAuthHandler(): Promise<(req: Request) => Promise<Response>> {
   const instructions = await buildServerInstructions();
-  const handler = createMcpHandler(registerTools, { instructions }, { basePath: "/api", maxDuration: 60 });
+  // Eindeutige Server-Identität: der mcp-handler-Default ("mcp-typescript server on
+  // vercel" 0.1.0) ist bei allen mcp-handler-Servern identisch — kollidiert also mit
+  // jedem anderen Connector desselben Stacks (z.B. Chastity-Tracker) und kann von
+  // Client-Registries als Duplikat dedupliziert/verschattet werden.
+  const handler = createMcpHandler(
+    registerTools,
+    { serverInfo: { name: "migraene-tracker", version: "1.0.0" }, instructions },
+    { basePath: "/api", maxDuration: 60 },
+  );
   // resourceMetadataPath: der 401-WWW-Authenticate-Header muss auf die pfad-suffigierte
   // Metadata-Variante zeigen (RFC 9728) — Browser-Clients (claude.ai Web/Desktop) validieren
   // deren `resource`-Feld strikt gegen die MCP-URL und brechen sonst ab.
