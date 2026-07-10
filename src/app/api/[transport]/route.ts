@@ -99,7 +99,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
           notes: z.string().optional().describe("Narrative Zusammenfassung in den Worten des Nutzers (1-2 Sätze) — bewahrt Kontext jenseits der Tags. IMMER ausfüllen."),
           medications: z.string().optional().describe("Eingenommene Medikamente"),
           startedAt: z.string().optional().describe("Datetime für rückwirkende Einträge. Naive Zeiten (ohne Offset) werden als Europe/Zurich interpretiert."),
-          episodeGroupId: z.string().optional().describe("Optional: gemeinsame ID, um mehrere Schübe desselben Tages zu einer Episode zu gruppieren."),
+          episodeGroupId: z.string().optional().describe("Optional: gemeinsame ID, um mehrere Schübe desselben Tages zu einer Episode zu gruppieren. Attacken sind nicht löschbar — nutze dies (oder update_attack), statt einen Fehleintrag durch einen neuen zu ersetzen."),
         },
       },
       (args) => run("log_attack_start", () => logAttackStart(args)),
@@ -138,7 +138,14 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
         title: "Attacke korrigieren",
         description:
           "Aktualisiere oder korrigiere eine bereits erfasste Attacke. " +
-          "Nützlich wenn der Nutzer nachträglich Informationen ergänzen oder korrigieren will.",
+          "Nützlich wenn der Nutzer nachträglich Informationen ergänzen oder korrigieren will. " +
+          "\n\n" +
+          "WICHTIG: Attacken lassen sich NICHT löschen. Dieses Tool ist der einzige Weg, einen " +
+          "Fehleintrag zu berichtigen — lege niemals einen Ersatz-Eintrag an, das würde die Statistik " +
+          "verfälschen (die Attacke zählt sonst doppelt).\n" +
+          "Wurde etwas versehentlich als eigenständige Attacke erfasst, obwohl es zu einer anderen " +
+          "gehört (z.B. Nachwehen desselben Tages), fasse beide über eine gemeinsame `episodeGroupId` " +
+          "zu einer Episode zusammen und halte den Sachverhalt in `notes` fest.",
         inputSchema: {
           attackId: z.string().describe("ID der zu aktualisierenden Attacke"),
           intensity: z.number().int().min(0).max(10).optional().describe("Kopfschmerz 0-10 (0 = schmerzfrei)"),
