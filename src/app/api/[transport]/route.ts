@@ -38,9 +38,29 @@ async function run<T>(label: string, fn: () => Promise<T>): Promise<ToolResult> 
 
 const TRIGGER_SLUGS = TRIGGER_TAGS.map((t) => t.slug);
 
-function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]>[0]) {
-  {
+type ToolServer = Parameters<Parameters<typeof createMcpHandler>[0]>[0];
+
+// Steht vor JEDER Tool-Beschreibung — das ist der einzige Hebel, über den Clients diesen
+// Server in ihrer Tool-Suche finden: der Connector wird dort nur über seine UUID adressiert,
+// sein Anzeigename fliesst nicht in den Tool-Namespace. Durchsucht werden allein Tool-Namen
+// und Beschreibungstexte. Die Schreibvarianten sind Absicht: ohne 'migraine'/'migrane' läuft
+// jede englische oder umlautlose Suche ins Leere, und ohne 'Tracker' gewinnt ein fremder
+// Server, der das Wort im Namen führt.
+const TOOL_DESCRIPTION_PREFIX =
+  "Migräne-Tagebuch / Migraine Diary (Migräne-Tracker, migraine tracker, Kopfschmerz, headache) — ";
+
+function registerTools(server: ToolServer) {
+  // Präfix zentral injizieren, statt ihn an jeder Registrierung zu wiederholen: ein vergessener
+  // Präfix wäre sonst unsichtbar (kein Typfehler, grüner Build) und das Tool schlicht unauffindbar.
+  const registerTool: ToolServer["registerTool"] = (name, config, cb) =>
     server.registerTool(
+      name,
+      { ...config, description: TOOL_DESCRIPTION_PREFIX + (config.description ?? "") },
+      cb,
+    );
+
+  {
+    registerTool(
       "get_overview",
       {
         title: "Übersicht abrufen",
@@ -59,7 +79,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       () => run("get_overview", buildOverview),
     );
 
-    server.registerTool(
+    registerTool(
       "log_attack_start",
       {
         title: "Attacke starten",
@@ -105,7 +125,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("log_attack_start", () => logAttackStart(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "log_attack_end",
       {
         title: "Attacke abschliessen",
@@ -132,7 +152,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("log_attack_end", () => logAttackEnd(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "update_attack",
       {
         title: "Attacke korrigieren",
@@ -165,7 +185,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("update_attack", () => updateAttack(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "list_attacks",
       {
         title: "Attacken auflisten",
@@ -179,7 +199,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("list_attacks", () => listAttacks(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "get_statistics",
       {
         title: "Statistiken abrufen",
@@ -194,7 +214,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("get_statistics", () => getStatistics(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "list_medications",
       {
         title: "Medikamente auflisten",
@@ -206,7 +226,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       () => run("list_medications", listMedications),
     );
 
-    server.registerTool(
+    registerTool(
       "set_medication",
       {
         title: "Medikament anlegen/ändern",
@@ -230,7 +250,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("set_medication", () => setMedication(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "audit_timestamps",
       {
         title: "Zeitstempel prüfen",
@@ -246,7 +266,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("audit_timestamps", () => auditTimestamps(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "list_history",
       {
         title: "Anamnese auflisten",
@@ -260,7 +280,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("list_history", () => listHistory(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "upsert_history",
       {
         title: "Anamnese-Eintrag anlegen/ändern",
@@ -300,7 +320,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("upsert_history", () => upsertHistory(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "set_standing_instructions",
       {
         title: "Dauerhafte Anweisungen setzen",
@@ -316,7 +336,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
       (args) => run("set_standing_instructions", () => setStandingInstructions(args)),
     );
 
-    server.registerTool(
+    registerTool(
       "delete_history",
       {
         title: "Anamnese-Eintrag löschen",
@@ -339,7 +359,7 @@ function registerTools(server: Parameters<Parameters<typeof createMcpHandler>[0]
 //  3. Wörtliches Abbild der dauerhaften Anweisungen (Stand beim Server-Start).
 
 const MCP_SERVER_INSTRUCTIONS =
-  "Migräne-Tracker MCP. Erfasst Attacken, Medikamentenphasen und die Krankengeschichte.\n\n" +
+  "Migräne-Tagebuch (Migräne-Tracker) MCP. Erfasst Attacken, Medikamentenphasen und die Krankengeschichte.\n\n" +
   "BEFEHLE / Tool-Wahl:\n" +
   "• IMMER ZUERST → `get_overview`: offene Attacken, `clinicalBriefing` (Pflichtlektüre), " +
   "`patientHistory` (Vorgeschichte), 30-Tage-Statistik, aktuelle Medikation.\n" +
@@ -432,6 +452,9 @@ async function buildAuthHandler(): Promise<(req: Request) => Promise<Response>> 
   // vercel" 0.1.0) ist bei allen mcp-handler-Servern identisch — kollidiert also mit
   // jedem anderen Connector desselben Stacks (z.B. Chastity-Tracker) und kann von
   // Client-Registries als Duplikat dedupliziert/verschattet werden.
+  // ACHTUNG: dieser Name ist KEIN Discovery-Hebel — die Tool-Suche der Clients adressiert den
+  // Connector über seine UUID und sieht nur Tool-Namen und Beschreibungen. Auffindbarkeit läuft
+  // ausschliesslich über TOOL_DESCRIPTION_PREFIX; hier zu schrauben bringt nichts.
   const handler = createMcpHandler(
     registerTools,
     { serverInfo: { name: "migraene-tracker", version: "1.0.0" }, instructions },
