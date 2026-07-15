@@ -30,6 +30,33 @@ model Attack {
   @@index([episodeGroupId])
 }
 
+// Archiv gelöschter Attacken. delete_attack kopiert die Zeile hierher, BEVOR sie aus
+// Attack entfernt wird — so bleibt sie erhalten, ohne dass Auswertungen gelöschte Attacken
+// ausfiltern müssten (sie sind schlicht nicht mehr in Attack).
+// id + Original-createdAt/updatedAt bleiben erhalten für einen originalgetreuen Restore.
+// Restore ist MANUELLE DB-Arbeit (kein Tool): Zeile zurück nach Attack + hier löschen.
+model DeletedAttack {
+  id             String    @id
+  startedAt      DateTime
+  endedAt        DateTime?
+  intensity      Int?
+  auraSeverity   Int?
+  hasAura        Boolean?
+  auraType       String?
+  hadPostdrome   Boolean?
+  postdromeNotes String?
+  triggers       String    @default("[]")
+  notes          String?
+  medications    String?
+  weather        String?
+  episodeGroupId String?
+  createdAt      DateTime
+  updatedAt      DateTime
+  deletedAt      DateTime  @default(now())
+
+  @@index([deletedAt])
+}
+
 // Freie Anamnese / Vorgeschichte — der Kontext, der die Attacken-Daten erst
 // interpretierbar macht (Vorbefunde, Bildgebung, relevante Ereignisse wie TGA,
 // Komorbiditäten). Wird in get_overview mitgeliefert, damit der Kontext in JEDER

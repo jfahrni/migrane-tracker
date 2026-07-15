@@ -6,6 +6,7 @@ import {
   logAttackStart,
   logAttackEnd,
   updateAttack,
+  deleteAttack,
   listAttacks,
   getStatistics,
   listMedications,
@@ -87,6 +88,11 @@ function registerTools(server: ToolServer) {
           "Erfasse den Beginn einer Migräne-Attacke. " +
           "Rufe dieses Tool auf, wenn der Nutzer erwähnt, dass er Migräne hat oder hatte. " +
           "\n\n" +
+          "ZUERST DUBLETTEN VERMEIDEN: Prüfe VOR dem Anlegen über get_overview (lastAttacks) bzw. list_attacks, " +
+          "ob für diesen Zeitraum bereits eine Attacke existiert. Wenn ja, lege KEINE neue an — nutze " +
+          "update_attack, um sie zu ergänzen/korrigieren (oder episodeGroupId für einen weiteren Schub desselben " +
+          "Tages). Nur ein WIRKLICH neues Ereignis wird als neue Attacke erfasst. " +
+          "\n\n" +
           "ANWEISUNG — FÜHRE EINE KURZE ANAMNESE WIE EIN NEUROLOGE. " +
           "Stelle gezielte Rückfragen, BEVOR du erfasst, damit die Daten auswertbar werden. " +
           "Frage NICHT alles auf einmal ab: stelle 1–3 Fragen pro Nachricht, beginne mit dem Wichtigsten, und überspringe alles, was der Nutzer schon gesagt hat. " +
@@ -119,7 +125,7 @@ function registerTools(server: ToolServer) {
           notes: z.string().optional().describe("Narrative Zusammenfassung in den Worten des Nutzers (1-2 Sätze) — bewahrt Kontext jenseits der Tags. IMMER ausfüllen."),
           medications: z.string().optional().describe("Eingenommene Medikamente"),
           startedAt: z.string().optional().describe("Datetime für rückwirkende Einträge. Naive Zeiten (ohne Offset) werden als Europe/Zurich interpretiert."),
-          episodeGroupId: z.string().optional().describe("Optional: gemeinsame ID, um mehrere Schübe desselben Tages zu einer Episode zu gruppieren. Attacken sind nicht löschbar — nutze dies (oder update_attack), statt einen Fehleintrag durch einen neuen zu ersetzen."),
+          episodeGroupId: z.string().optional().describe("Optional: gemeinsame ID, um mehrere Schübe desselben Tages zu einer Episode zu gruppieren. Für Korrekturen update_attack nutzen, statt einen Fehleintrag durch einen neuen zu ersetzen (Löschen nur auf ausdrücklichen Nutzer-Wunsch via delete_attack)."),
         },
       },
       (args) => run("log_attack_start", () => logAttackStart(args)),
@@ -160,9 +166,10 @@ function registerTools(server: ToolServer) {
           "Aktualisiere oder korrigiere eine bereits erfasste Attacke. " +
           "Nützlich wenn der Nutzer nachträglich Informationen ergänzen oder korrigieren will. " +
           "\n\n" +
-          "WICHTIG: Attacken lassen sich NICHT löschen. Dieses Tool ist der einzige Weg, einen " +
-          "Fehleintrag zu berichtigen — lege niemals einen Ersatz-Eintrag an, das würde die Statistik " +
-          "verfälschen (die Attacke zählt sonst doppelt).\n" +
+          "WICHTIG: Dieses Tool ist der Weg, einen Fehleintrag zu berichtigen — lege niemals einen " +
+          "Ersatz-Eintrag an, das würde die Statistik verfälschen (die Attacke zählt sonst doppelt). " +
+          "Löschen gibt es (delete_attack), aber NUR auf ausdrücklichen Nutzer-Wunsch; für Korrekturen " +
+          "immer dieses update_attack.\n" +
           "Wurde etwas versehentlich als eigenständige Attacke erfasst, obwohl es zu einer anderen " +
           "gehört (z.B. Nachwehen desselben Tages), fasse beide über eine gemeinsame `episodeGroupId` " +
           "zu einer Episode zusammen und halte den Sachverhalt in `notes` fest.",
@@ -183,6 +190,27 @@ function registerTools(server: ToolServer) {
         },
       },
       (args) => run("update_attack", () => updateAttack(args)),
+    );
+
+    registerTool(
+      "delete_attack",
+      {
+        title: "Attacke löschen",
+        description:
+          "Löscht eine Attacke anhand ihrer attackId. Die Zeile wird zuvor ins Archiv (DeletedAttack) " +
+          "verschoben (manuell über die DB wiederherstellbar — es gibt KEIN Restore-Tool); aus allen " +
+          "Statistiken verschwindet sie sofort. " +
+          "\n\n" +
+          "NUR AUF AUSDRÜCKLICHEN NUTZER-WUNSCH für eine KONKRETE Attacke aufrufen — niemals aus eigener " +
+          "Initiative. Für inhaltliche Korrekturen `update_attack` verwenden, für versehentlich getrennt " +
+          "erfasste Schübe desselben Tages `episodeGroupId`. Löschen ist nur für echte Dubletten oder " +
+          "Test-Einträge gedacht, die der Nutzer ausdrücklich entfernt haben will. " +
+          "Im Zweifel NICHT löschen, sondern beim Nutzer rückfragen.",
+        inputSchema: {
+          attackId: z.string().describe("ID der zu löschenden Attacke"),
+        },
+      },
+      (args) => run("delete_attack", () => deleteAttack(args)),
     );
 
     registerTool(
@@ -342,7 +370,7 @@ function registerTools(server: ToolServer) {
         title: "Anamnese-Eintrag löschen",
         description:
           "Löscht einen Eintrag der Vorgeschichte anhand seiner id. Nutze dies, um versehentlich " +
-          "angelegte oder doppelte Einträge zu entfernen. Attacken lassen sich damit NICHT löschen.",
+          "angelegte oder doppelte Einträge zu entfernen. Für Attacken gibt es dafür delete_attack.",
         inputSchema: {
           id: z.string().describe("ID des zu löschenden Anamnese-Eintrags"),
         },
@@ -374,8 +402,10 @@ const MCP_SERVER_INSTRUCTIONS =
   "• MEDIKATION → `list_medications`, `set_medication` (Phasen anlegen/absetzen).\n" +
   "• REGELN → `set_standing_instructions`: dauerhafte Anweisungen des Nutzers; sie erscheinen " +
   "danach in `get_overview.clinicalBriefing.readFirst`.\n\n" +
-  "Attacken lassen sich NICHT löschen — Fehleinträge werden per `update_attack` korrigiert oder " +
-  "über `episodeGroupId` zusammengefasst. Nur Anamnese-Einträge sind löschbar.\n\n" +
+  "Fehleinträge bei Attacken werden per `update_attack` korrigiert oder über `episodeGroupId` " +
+  "zusammengefasst — NICHT durch einen Ersatz-Eintrag. `delete_attack` existiert, ist aber NUR auf " +
+  "ausdrücklichen Nutzer-Wunsch für eine konkrete Attacke zu nutzen (echte Dubletten/Test-Einträge), " +
+  "nie aus eigener Initiative; die Zeile wird dabei ins Archiv verschoben.\n\n" +
   "DATIERUNG: Angaben mit vorangestelltem 'ca.' sind Näherungen, keine belegten Daten. Behandle sie " +
   "niemals als Fakten und leite daraus keine exakten Zeiträume oder Tageszählungen ab. Beim Erfassen " +
   "unscharfer Zeitpunkte `precision` (YEAR|MONTH|DAY) und `approximate=true` setzen, statt ein Datum " +

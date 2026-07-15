@@ -350,6 +350,29 @@ export async function updateAttack(input: {
   return { ...attackSummary(updated), message: "Attacke aktualisiert." };
 }
 
+// ── delete_attack ─────────────────────────────────────────────────────────────
+
+export async function deleteAttack(input: { attackId: string }) {
+  const { attackId } = input;
+  // Archivieren-dann-löschen in EINER Transaktion: entweder die Attacke landet im Archiv
+  // UND verschwindet aus Attack, oder gar nichts passiert — kein Datenverlust bei Teilfehler.
+  // Ein Restore (Archiv → Attack) ist manuelle DB-Arbeit und muss die Archiv-Zeile wieder
+  // entfernen, sonst kollidiert ein erneutes Löschen derselben id mit dem Archiv-PK.
+  const archived = await prisma.$transaction(async (tx) => {
+    const row = await tx.attack.findUnique({ where: { id: attackId } });
+    if (!row) throw new Error(`Attacke ${attackId} nicht gefunden — nichts gelöscht.`);
+    // row trägt exakt die Attack-Felder; deletedAt bekommt seinen Default. Same id → Restore ist originalgetreu.
+    await tx.deletedAttack.create({ data: row });
+    await tx.attack.delete({ where: { id: attackId } });
+    return row;
+  });
+
+  return {
+    ...attackSummary(archived),
+    message: "Attacke gelöscht und ins Archiv (DeletedAttack) verschoben — manuell über die DB wiederherstellbar.",
+  };
+}
+
 // ── list_attacks ──────────────────────────────────────────────────────────────
 
 export async function listAttacks(input: {
