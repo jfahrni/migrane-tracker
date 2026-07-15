@@ -1,8 +1,9 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 
-export const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
-export const OAUTH_TOKEN_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+export const OAUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 min
+export const OAUTH_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 h (Access-Token — wird still per Refresh erneuert)
+export const OAUTH_REFRESH_TTL_MS = 365 * 24 * 60 * 60 * 1000; // 1 Jahr (Refresh-Token, nicht-rotierend)
 export const OAUTH_SUPPORTED_SCOPES = ["read"] as const;
 
 export function generateToken(byteLength = 32): string {
@@ -110,10 +111,32 @@ export async function verifyAccessToken(token?: string) {
   return record;
 }
 
+export async function createRefreshToken(clientId: string, scopes: string[]) {
+  const raw = generateToken(40);
+  await prisma.oAuthRefreshToken.create({
+    data: {
+      tokenHash: hashToken(raw),
+      clientId,
+      scopes: scopes.join(" "),
+      expiresAt: new Date(Date.now() + OAUTH_REFRESH_TTL_MS),
+    },
+  });
+  return raw;
+}
+
+export async function verifyRefreshToken(token?: string) {
+  if (!token) return null;
+  const record = await prisma.oAuthRefreshToken.findUnique({ where: { tokenHash: hashToken(token) } });
+  if (!record) return null;
+  if (record.expiresAt < new Date()) return null;
+  return record;
+}
+
 export async function pruneExpiredOAuthRecords() {
   const now = new Date();
   await Promise.all([
     prisma.oAuthCode.deleteMany({ where: { expiresAt: { lt: now } } }),
     prisma.oAuthToken.deleteMany({ where: { expiresAt: { lt: now } } }),
+    prisma.oAuthRefreshToken.deleteMany({ where: { expiresAt: { lt: now } } }),
   ]);
 }

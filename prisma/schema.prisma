@@ -85,8 +85,9 @@ model OAuthClient {
   redirectUris String   // JSON array
   createdAt    DateTime @default(now())
 
-  codes  OAuthCode[]
-  tokens OAuthToken[]
+  codes         OAuthCode[]
+  tokens        OAuthToken[]
+  refreshTokens OAuthRefreshToken[]
 }
 
 model OAuthCode {
@@ -107,6 +108,19 @@ model OAuthCode {
 }
 
 model OAuthToken {
+  id        String      @id @default(cuid())
+  tokenHash String      @unique
+  clientId  String
+  client    OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  scopes    String
+  expiresAt DateTime
+  createdAt DateTime    @default(now())
+
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+model OAuthRefreshToken {
   id        String      @id @default(cuid())
   tokenHash String      @unique
   clientId  String

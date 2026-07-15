@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     client_id: client.clientId,
     client_name: client.clientName,
     redirect_uris: redirectUris,
-    grant_types: ["authorization_code"],
+    grant_types: ["authorization_code", "refresh_token"],
     response_types: ["code"],
     scope: OAUTH_SUPPORTED_SCOPES.join(" "),
     token_endpoint_auth_method: "none",
