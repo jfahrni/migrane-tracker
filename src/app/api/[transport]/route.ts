@@ -17,6 +17,7 @@ import {
   deleteHistory,
   setStandingInstructions,
   getStandingInstructions,
+  currentServerTime,
   HISTORY_TYPES,
   DATE_PRECISIONS,
 } from "@/lib/mcp";
@@ -28,12 +29,27 @@ export const dynamic = "force-dynamic";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
+// Vorangestellte Zeit-Zeile für JEDE Tool-Antwort. Steht bewusst als ERSTER
+// content-Block VOR der Nutzlast, damit "heute" nie aus dem Gesprächskontext
+// geraten wird (wiederkehrender Fehler: Attacken auf den falschen Tag datiert).
+function serverTimeBlock(): { type: "text"; text: string } {
+  const t = currentServerTime();
+  return {
+    type: "text",
+    text:
+      `⏱ Aktuelle Serverzeit (Europe/Zurich): ${t.zurich}. ` +
+      `Verwende dieses Datum als "heute" — leite den aktuellen Tag NICHT aus dem ` +
+      `Gesprächsverlauf ab. (ISO: ${t.iso})`,
+  };
+}
+
 async function run<T>(label: string, fn: () => Promise<T>): Promise<ToolResult> {
+  const now = serverTimeBlock();
   try {
     const data = await fn();
-    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    return { content: [now, { type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (e) {
-    return { content: [{ type: "text", text: `${label} failed: ${(e as Error).message}` }], isError: true };
+    return { content: [now, { type: "text", text: `${label} failed: ${(e as Error).message}` }], isError: true };
   }
 }
 

@@ -13,6 +13,25 @@ function formatDate(d: Date | null | undefined): string | null {
   return d.toLocaleDateString("de-CH", { timeZone: APP_TZ });
 }
 
+// Aktuelle Serverzeit in Europe/Zurich, inkl. Wochentag. Wird bei JEDEM
+// Tool-Aufruf VOR der Nutzlast ausgeliefert (siehe run() im Transport):
+// Claude hat wiederholt Attacken auf den falschen Tag datiert, weil "heute"
+// aus dem Gesprächskontext statt aus der realen Uhr abgeleitet wurde. Der
+// Wochentag macht einen Tagessprung sofort sichtbar.
+export function currentServerTime(): { zurich: string; iso: string } {
+  const now = new Date();
+  const zurich = now.toLocaleString("de-CH", {
+    timeZone: APP_TZ,
+    weekday: "long",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return { zurich, iso: now.toISOString() };
+}
+
 // ── Unschärfe-tolerante Datumsausgabe ────────────────────────────────────────
 // Der Kern: die AUSGABE trägt die Unschärfe. Ein "01.01.2020" ohne Kennzeichnung
 // liest sich in sechs Monaten wie ein Fakt — "ca. 2020" nicht.
